@@ -392,6 +392,18 @@ func (s *SettingService) GetAllSettings(ctx context.Context) (*SystemSettings, e
 }
 
 // GetFrontendURL 获取前端基础URL（数据库优先，fallback 到配置文件）
+// PricingDataDir 返回配置文件里的 pricing.data_dir，作为本地数据根目录。
+// 用于 image_cache 等需要落盘的子目录共享同一个 data 根。
+// 缺省回落到 "./data"。
+func (s *SettingService) PricingDataDir() string {
+	if s != nil && s.cfg != nil {
+		if d := strings.TrimSpace(s.cfg.Pricing.DataDir); d != "" {
+			return d
+		}
+	}
+	return "./data"
+}
+
 func (s *SettingService) GetFrontendURL(ctx context.Context) string {
 	val, err := s.settingRepo.GetValue(ctx, SettingKeyFrontendURL)
 	if err == nil && strings.TrimSpace(val) != "" {
@@ -1170,6 +1182,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyTablePageSizeOptions] = string(tablePageSizeOptionsJSON)
 	updates[SettingKeyCustomMenuItems] = settings.CustomMenuItems
 	updates[SettingKeyCustomEndpoints] = settings.CustomEndpoints
+	updates[SettingKeyImageCacheBaseURL] = strings.TrimSpace(settings.ImageCacheBaseURL)
+	updates[SettingKeyDefaultImageResponseFormat] = normalizeDefaultImageResponseFormatValue(settings.DefaultImageResponseFormat)
 
 	// 默认配置
 	updates[SettingKeyDefaultConcurrency] = strconv.Itoa(settings.DefaultConcurrency)
@@ -1908,13 +1922,16 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyMaxClaudeCodeVersion: "",
 
 		// 分组隔离（默认不允许未分组 Key 调度）
-		SettingKeyAllowUngroupedKeyScheduling:        "false",
-		SettingKeyEnableAnthropicCacheTTL1hInjection: "false",
-		SettingPaymentVisibleMethodAlipaySource:      "",
-		SettingPaymentVisibleMethodWxpaySource:       "",
-		SettingPaymentVisibleMethodAlipayEnabled:     "false",
-		SettingPaymentVisibleMethodWxpayEnabled:      "false",
-		openAIAdvancedSchedulerSettingKey:            "false",
+		SettingKeyAllowUngroupedKeyScheduling:    "false",
+		SettingPaymentVisibleMethodAlipaySource:  "",
+		SettingPaymentVisibleMethodWxpaySource:   "",
+		SettingPaymentVisibleMethodAlipayEnabled: "false",
+		SettingPaymentVisibleMethodWxpayEnabled:  "false",
+		openAIAdvancedSchedulerSettingKey:        "false",
+
+		// OpenAI 图片网关
+		SettingKeyImageCacheBaseURL:          "",
+		SettingKeyDefaultImageResponseFormat: "auto",
 	}
 
 	return s.settingRepo.SetMultiple(ctx, defaults)
@@ -1953,6 +1970,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
 		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
 		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
+		ImageCacheBaseURL:                strings.TrimSpace(settings[SettingKeyImageCacheBaseURL]),
+		DefaultImageResponseFormat:       normalizeDefaultImageResponseFormatValue(settings[SettingKeyDefaultImageResponseFormat]),
 		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
 	}
 	result.TableDefaultPageSize, result.TablePageSizeOptions = parseTablePreferences(
@@ -3446,4 +3465,15 @@ func (s *SettingService) SetStreamTimeoutSettings(ctx context.Context, settings 
 	}
 
 	return s.settingRepo.Set(ctx, SettingKeyStreamTimeoutSettings, string(data))
+}
+
+// normalizeDefaultImageResponseFormatValue 归一化「图片接口默认 response_format」枚举。
+// 合法值：auto / b64_json / url / markdown，其它（含空）回落到 auto。
+func normalizeDefaultImageResponseFormatValue(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "b64_json", "url", "markdown":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return "auto"
+	}
 }

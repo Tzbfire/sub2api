@@ -2808,6 +2808,7 @@ export default {
       testConnection: 'Test Connection',
       reAuthorize: 'Re-Authorize',
       refreshToken: 'Refresh Token',
+      refreshImageQuota: 'Refresh Image Quota',
       noAccountsYet: 'No accounts yet',
       createFirstAccount: 'Create your first account to start using AI services.',
       tokenRefreshed: 'Token refreshed successfully',
@@ -2827,6 +2828,7 @@ export default {
         disableScheduling: 'Disable Scheduling',
         resetStatus: 'Reset Status',
         refreshToken: 'Refresh Token',
+        refreshImageQuota: 'Refresh Image Quota',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
         partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
@@ -5060,6 +5062,15 @@ export default {
         maxVersionPlaceholder: 'e.g. 2.5.0',
         maxVersionHint:
           'Reject Claude Code clients above this version (semver format). Leave empty to allow any version.'
+      },
+      imageGateway: {
+        title: 'OpenAI Image Gateway',
+        description: 'Global behavior for /v1/images/* and image-aware chat/responses endpoints',
+        cacheBaseURL: 'Image Cache Base URL',
+        cacheBaseURLHint: 'When response_format=url, signed short URLs use this base (e.g. https://gateway.example.com). Leave empty to infer from request headers.',
+        defaultResponseFormat: 'Default Image Response Format',
+        defaultResponseFormatHint: 'Used when the client does not specify response_format. auto = keep entry-point default (images/* → b64_json, chat/responses → markdown).',
+        formatAuto: 'Auto (entry-point default)'
       },
       scheduling: {
         title: 'Gateway Scheduling Settings',

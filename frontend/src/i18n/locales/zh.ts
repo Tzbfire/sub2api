@@ -2803,6 +2803,7 @@ export default {
       testConnection: '测试连接',
       reAuthorize: '重新授权',
       refreshToken: '刷新令牌',
+      refreshImageQuota: '刷新图片额度',
       noAccountsYet: '暂无账号',
       createFirstAccount: '添加 AI 平台账号以开始使用 API 网关。',
       tokenRefreshed: 'Token 刷新成功',
@@ -2974,6 +2975,7 @@ export default {
         disableScheduling: '批量停止调度',
         resetStatus: '批量重置状态',
         refreshToken: '批量刷新令牌',
+        refreshImageQuota: '批量刷新图片额度',
         resetStatusSuccess: '已成功重置 {count} 个账号状态',
         refreshTokenSuccess: '已成功刷新 {count} 个账号令牌',
         partialSuccess: '操作部分完成：{success} 成功，{failed} 失败'
@@ -5219,6 +5221,15 @@ export default {
         maxVersion: '最高版本号',
         maxVersionPlaceholder: '例如 2.5.0',
         maxVersionHint: '拒绝高于此版本的 Claude Code 客户端请求（semver 格式）。留空则不限制最高版本。'
+      },
+      imageGateway: {
+        title: 'OpenAI 图片网关',
+        description: '控制 /v1/images/* 与图片相关的 chat/responses 接口的全局行为',
+        cacheBaseURL: '图片缓存 Base URL',
+        cacheBaseURLHint: '当 response_format=url 时，签发的短链将使用该 URL 作为前缀（如 https://gateway.example.com）。留空则按请求头自动推断。',
+        defaultResponseFormat: '默认图片返回方式',
+        defaultResponseFormatHint: '客户端未显式传 response_format 时使用该默认值。auto = 保留入口默认（images/* 走 b64_json，chat/responses 走 markdown）。',
+        formatAuto: '自动（按入口默认）'
       },
       scheduling: {
         title: '网关调度设置',

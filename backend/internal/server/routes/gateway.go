@@ -67,6 +67,10 @@ func RegisterGatewayRoutes(
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
 			if getGroupPlatform(c) == service.PlatformOpenAI {
+				if h.OpenAIImagesV2.ShouldHandle(c) {
+					h.OpenAIImagesV2.Responses(c)
+					return
+				}
 				h.OpenAIGateway.Responses(c)
 				return
 			}
@@ -74,6 +78,10 @@ func RegisterGatewayRoutes(
 		})
 		gateway.POST("/responses/*subpath", func(c *gin.Context) {
 			if getGroupPlatform(c) == service.PlatformOpenAI {
+				if h.OpenAIImagesV2.ShouldHandle(c) {
+					h.OpenAIImagesV2.Responses(c)
+					return
+				}
 				h.OpenAIGateway.Responses(c)
 				return
 			}
@@ -83,6 +91,10 @@ func RegisterGatewayRoutes(
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
 			if getGroupPlatform(c) == service.PlatformOpenAI {
+				if h.OpenAIImagesV2.ShouldHandle(c) {
+					h.OpenAIImagesV2.ChatCompletions(c)
+					return
+				}
 				h.OpenAIGateway.ChatCompletions(c)
 				return
 			}
@@ -98,7 +110,7 @@ func RegisterGatewayRoutes(
 				})
 				return
 			}
-			h.OpenAIGateway.Images(c)
+			h.OpenAIImagesV2.Generations(c)
 		})
 		gateway.POST("/images/edits", func(c *gin.Context) {
 			if getGroupPlatform(c) != service.PlatformOpenAI {
@@ -110,7 +122,7 @@ func RegisterGatewayRoutes(
 				})
 				return
 			}
-			h.OpenAIGateway.Images(c)
+			h.OpenAIImagesV2.Edits(c)
 		})
 	}
 
@@ -132,6 +144,10 @@ func RegisterGatewayRoutes(
 	// OpenAI Responses API（不带v1前缀的别名）— auto-route based on group platform
 	responsesHandler := func(c *gin.Context) {
 		if getGroupPlatform(c) == service.PlatformOpenAI {
+			if h.OpenAIImagesV2.ShouldHandle(c) {
+				h.OpenAIImagesV2.Responses(c)
+				return
+			}
 			h.OpenAIGateway.Responses(c)
 			return
 		}
@@ -150,6 +166,10 @@ func RegisterGatewayRoutes(
 	// OpenAI Chat Completions API（不带v1前缀的别名）— auto-route based on group platform
 	r.POST("/chat/completions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
 		if getGroupPlatform(c) == service.PlatformOpenAI {
+			if h.OpenAIImagesV2.ShouldHandle(c) {
+				h.OpenAIImagesV2.ChatCompletions(c)
+				return
+			}
 			h.OpenAIGateway.ChatCompletions(c)
 			return
 		}
@@ -165,7 +185,7 @@ func RegisterGatewayRoutes(
 			})
 			return
 		}
-		h.OpenAIGateway.Images(c)
+		h.OpenAIImagesV2.Generations(c)
 	})
 	r.POST("/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, func(c *gin.Context) {
 		if getGroupPlatform(c) != service.PlatformOpenAI {
@@ -177,7 +197,7 @@ func RegisterGatewayRoutes(
 			})
 			return
 		}
-		h.OpenAIGateway.Images(c)
+		h.OpenAIImagesV2.Edits(c)
 	})
 
 	// Antigravity 模型列表
@@ -212,6 +232,12 @@ func RegisterGatewayRoutes(
 		antigravityV1Beta.GET("/models/:model", h.Gateway.GeminiV1BetaGetModel)
 		antigravityV1Beta.POST("/models/*modelAction", h.Gateway.GeminiV1BetaModels)
 	}
+
+	// 图片短链：response_format=url 时返回的链接，公开 GET，无需 API Key（id 不可猜，TTL 24h）
+	// 显式注册 OPTIONS 以处理跨域预检（handler 内统一返回 ACAO:* 头）
+	r.GET("/v1/files/cached/:id", h.OpenAIImagesV2.ServeCachedFile)
+	r.OPTIONS("/v1/files/cached/:id", h.OpenAIImagesV2.ServeCachedFile)
+	r.HEAD("/v1/files/cached/:id", h.OpenAIImagesV2.ServeCachedFile)
 
 }
 
