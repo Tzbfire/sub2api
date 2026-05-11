@@ -193,7 +193,15 @@
           </template>
           <template #cell-platform_type="{ row }">
             <div class="flex flex-wrap items-center gap-1">
-              <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="getDisplayPlanType(row)" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+              <PlatformTypeBadge
+                :platform="row.platform"
+                :type="row.type"
+                :plan-type="getDisplayPlanType(row)"
+                :privacy-mode="row.extra?.privacy_mode"
+                :subscription-expires-at="row.credentials?.subscription_expires_at"
+                :kiro-provider="row.platform === 'kiro' ? (row.credentials?.provider as string | undefined) : undefined"
+                :kiro-auth-method="row.platform === 'kiro' ? (row.credentials?.auth_method as string | undefined) : undefined"
+              />
               <span
                 v-if="getOpenAICompactLabel(row)"
                 :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getOpenAICompactClass(row)]"

@@ -13,7 +13,48 @@
       <div
         class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-600 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400"
       >
-        IdC 账号需带 idcInfo + refreshToken；Social 账号需带 accessToken/refreshToken/profileArn。导入后请去账号详情绑定到对应 group。
+        支持 4 种 Kiro 账号：<b>Google / GitHub</b>（authMethod=Social）和 <b>BuilderId / Enterprise</b>（authMethod=IdC）。导入后请去账号详情绑定到对应 group。
+      </div>
+
+      <div class="rounded-lg border border-gray-200 dark:border-dark-700">
+        <button
+          type="button"
+          class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-50 dark:text-dark-200 dark:hover:bg-dark-800"
+          @click="showExamples = !showExamples"
+        >
+          <span>📋 查看 4 种账号 JSON 示例</span>
+          <span class="text-gray-400">{{ showExamples ? '▲' : '▼' }}</span>
+        </button>
+        <div v-if="showExamples" class="border-t border-gray-200 p-3 dark:border-dark-700">
+          <div class="mb-2 flex flex-wrap gap-1">
+            <button
+              v-for="ex in examples"
+              :key="ex.key"
+              type="button"
+              :class="[
+                'rounded px-2 py-1 text-[11px] font-medium',
+                activeExample === ex.key
+                  ? 'bg-primary-500 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-dark-700 dark:text-dark-200 dark:hover:bg-dark-600',
+              ]"
+              @click="activeExample = ex.key"
+            >
+              {{ ex.label }}
+            </button>
+          </div>
+          <pre
+            class="max-h-60 overflow-auto rounded bg-gray-50 p-2 font-mono text-[11px] text-gray-700 dark:bg-dark-800 dark:text-dark-200"
+          >{{ activeExampleJson }}</pre>
+          <div class="mt-2 flex justify-end">
+            <button
+              type="button"
+              class="text-xs text-primary-500 hover:underline"
+              @click="useExample"
+            >
+              使用此示例填充 →
+            </button>
+          </div>
+        </div>
       </div>
 
       <div>
@@ -46,7 +87,7 @@
           v-model="jsonText"
           rows="6"
           class="input w-full font-mono text-xs"
-          placeholder='[{"id":"...","authMethod":"IdC","idcInfo":{...},"refreshToken":"..."}]'
+          placeholder='[{"id":"...","authMethod":"Social","provider":"Google","accessToken":"...","refreshToken":"..."}]'
         />
       </div>
 
@@ -116,6 +157,93 @@ const importing = ref(false)
 const file = ref<File | null>(null)
 const jsonText = ref('')
 const result = ref<KiroImportResponse | null>(null)
+const showExamples = ref(false)
+const activeExample = ref<'google' | 'github' | 'builderid' | 'enterprise'>('google')
+
+const examples = [
+  { key: 'google' as const, label: 'Google (Social)' },
+  { key: 'github' as const, label: 'GitHub (Social)' },
+  { key: 'builderid' as const, label: 'BuilderId (IdC)' },
+  { key: 'enterprise' as const, label: 'Enterprise (IdC)' },
+]
+
+const exampleData: Record<string, unknown[]> = {
+  google: [
+    {
+      id: 'kiro-google-001',
+      label: 'My Google Kiro',
+      email: 'user@gmail.com',
+      provider: 'Google',
+      authMethod: 'Social',
+      status: 'active',
+      accessToken: '<access_token from kiro desktop>',
+      refreshToken: '<refresh_token>',
+      idToken: '<id_token>',
+      profileArn: 'arn:aws:codewhisperer:us-east-1:xxx:profile/xxx',
+      machineId: '<machine uuid>',
+      expiresAt: '2026-12-31T00:00:00Z',
+    },
+  ],
+  github: [
+    {
+      id: 'kiro-github-001',
+      label: 'My GitHub Kiro',
+      email: 'user@users.noreply.github.com',
+      provider: 'Github',
+      authMethod: 'Social',
+      status: 'active',
+      accessToken: '<access_token from kiro desktop>',
+      refreshToken: '<refresh_token>',
+      idToken: '<id_token>',
+      profileArn: 'arn:aws:codewhisperer:us-east-1:xxx:profile/xxx',
+      machineId: '<machine uuid>',
+      expiresAt: '2026-12-31T00:00:00Z',
+    },
+  ],
+  builderid: [
+    {
+      id: 'kiro-builderid-001',
+      label: 'My AWS BuilderId',
+      email: 'user@example.com',
+      provider: 'BuilderId',
+      authMethod: 'IdC',
+      status: 'active',
+      region: 'us-east-1',
+      clientId: '<oidc client id>',
+      clientSecret: '<oidc client secret JWT>',
+      accessToken: '<access_token>',
+      refreshToken: '<refresh_token>',
+      machineId: '<machine uuid>',
+      expiresAt: '2026-12-31T00:00:00Z',
+    },
+  ],
+  enterprise: [
+    {
+      id: 'kiro-enterprise-001',
+      label: 'My Enterprise SSO',
+      email: 'user@company.com',
+      provider: 'Enterprise',
+      authMethod: 'IdC',
+      status: 'active',
+      region: 'us-east-1',
+      startUrl: 'https://my-company.awsapps.com/start',
+      clientId: '<oidc client id>',
+      clientSecret: '<oidc client secret JWT>',
+      accessToken: '<access_token>',
+      refreshToken: '<refresh_token>',
+      machineId: '<machine uuid>',
+      expiresAt: '2026-12-31T00:00:00Z',
+    },
+  ],
+}
+
+const activeExampleJson = computed(() =>
+  JSON.stringify(exampleData[activeExample.value], null, 2)
+)
+
+const useExample = () => {
+  jsonText.value = activeExampleJson.value
+}
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const fileName = computed(() => file.value?.name || '')
@@ -129,6 +257,8 @@ watch(
       file.value = null
       jsonText.value = ''
       result.value = null
+      showExamples.value = false
+      activeExample.value = 'google'
       if (fileInput.value) fileInput.value.value = ''
     }
   }

@@ -7,6 +7,7 @@
         <span>{{ platformLabel }}</span>
       </span>
       <span :class="['inline-flex items-center gap-1 px-1.5 py-1', typeClass]">
+        <!-- Kiro provider badge (Google/Github/BuilderId/Enterprise) -->
         <!-- OAuth icon -->
         <svg
           v-if="type === 'oauth'"
@@ -28,6 +29,13 @@
         <Icon v-else-if="type === 'service_account'" name="cloud" size="xs" />
         <Icon v-else name="key" size="xs" />
         <span>{{ typeLabel }}</span>
+      </span>
+      <span
+        v-if="kiroProviderBadge"
+        :class="['inline-flex items-center gap-1 px-1.5 py-1', kiroProviderBadge.class]"
+        :title="kiroProviderBadge.title"
+      >
+        <span>{{ kiroProviderBadge.label }}</span>
       </span>
     </div>
     <!-- Row 2: Plan type + Privacy mode (only if either exists) -->
@@ -68,6 +76,8 @@ interface Props {
   planType?: string
   privacyMode?: string
   subscriptionExpiresAt?: string
+  kiroProvider?: string
+  kiroAuthMethod?: string
 }
 
 const props = defineProps<Props>()
@@ -170,6 +180,35 @@ const expiresLabel = computed(() => {
   } catch {
     return ''
   }
+})
+
+// Kiro provider badge — Google / Github / BuilderId / Enterprise
+const kiroProviderBadge = computed(() => {
+  if (props.platform !== 'kiro') return null
+  const raw = (props.kiroProvider || '').trim()
+  if (!raw) return null
+  const lower = raw.toLowerCase()
+  const auth = (props.kiroAuthMethod || '').toLowerCase()
+  let label = raw
+  let cls = 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
+  if (lower === 'google') {
+    label = 'Google'
+    cls = 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+  } else if (lower === 'github') {
+    label = 'GitHub'
+    cls = 'bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
+  } else if (lower === 'builderid' || lower === 'builder_id' || lower === 'aws_builderid') {
+    label = 'BuilderId'
+    cls = 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+  } else if (lower === 'enterprise' || lower === 'idc' || lower === 'iam_identity_center') {
+    label = 'Enterprise'
+    cls = 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
+  } else if (lower === 'internal') {
+    label = 'Internal'
+    cls = 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+  }
+  const title = auth ? `${label} · ${auth.toUpperCase()}` : label
+  return { label, class: cls, title }
 })
 
 // Privacy badge — shows different states for OpenAI/Antigravity OAuth privacy setting
