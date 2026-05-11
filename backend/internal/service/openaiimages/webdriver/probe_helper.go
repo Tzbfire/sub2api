@@ -2,8 +2,6 @@ package webdriver
 
 import (
 	"context"
-
-	"github.com/imroc/req/v3"
 )
 
 // NewProbeClient 暴露给外部包（如 openaiimages.AccountProbe）使用的 client 构造器。
@@ -16,7 +14,7 @@ import (
 //	c, _ := webdriver.NewProbeClient(proxyURL, fp)
 //	headers := webdriver.BuildBearerHeaders(accessToken, fp)
 //	c.R().SetHeaderMultiValues(headers).Get("https://chatgpt.com/backend-api/me")
-func NewProbeClient(proxyURL string, fp Fingerprint) (*req.Client, error) {
+func NewProbeClient(proxyURL string, fp Fingerprint) (*HTTPClient, error) {
 	return newHTTPClient(proxyURL, fp)
 }
 
@@ -29,7 +27,7 @@ func BuildBearerHeadersMap(accessToken string, fp Fingerprint) map[string]string
 // cf_clearance 等 anti-bot cookie。后续 backend-api 调用必须复用同一 client 才有效。
 //
 // 返回 error 仅用于 transport 失败；HTTP 状态码忽略（即便 403/503 也可能种 cookie）。
-func PrimeChatGPTSession(ctx context.Context, c *req.Client, fp Fingerprint) error {
+func PrimeChatGPTSession(ctx context.Context, c *HTTPClient, fp Fingerprint) error {
 	headers := headerToMap(buildBootstrapHeaders(AccountInfo{}, fp))
 	resp, err := c.R().SetContext(ctx).SetHeaders(headers).Get(startURL)
 	if err != nil {

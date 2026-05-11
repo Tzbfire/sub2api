@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/imroc/req/v3"
 )
 
 // retriable 判定 fetchDownloadURL/downloadBytes 是否值得重试。
@@ -26,7 +24,7 @@ func retriable(err error) bool {
 // pointer 类型决定调用哪个 ChatGPT 端点。
 func fetchDownloadURL(
 	ctx context.Context,
-	client *req.Client,
+	client *HTTPClient,
 	headers http.Header,
 	baseFilesURL, baseConvURL string,
 	conversationID string,
@@ -96,7 +94,7 @@ func fetchDownloadURL(
 // 因为 chatgpt edge 的签名 URL 可能绑定僵死连接，重试同一 URL 通常无效。
 func downloadBytes(
 	ctx context.Context,
-	client *req.Client,
+	client *HTTPClient,
 	headers http.Header,
 	downloadURL string,
 ) ([]byte, string, error) {
@@ -105,7 +103,7 @@ func downloadBytes(
 
 func downloadBytesOnce(
 	ctx context.Context,
-	client *req.Client,
+	client *HTTPClient,
 	headers http.Header,
 	downloadURL string,
 ) ([]byte, string, error) {

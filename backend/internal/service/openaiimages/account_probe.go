@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service/openaiimages/webdriver"
-	"github.com/imroc/req/v3"
 )
 
 // ProbeRepo 是 AccountProbe 写入 extra 所需的最小仓储接口；
@@ -45,8 +44,8 @@ type ProbeResult struct {
 //   - POST /backend-api/conversation/init     → limits_progress（含 image_gen 剩余 / reset_after）
 //   - JWT 中 https://api.openai.com/auth.chatgpt_plan_type 优先用作 plan
 type AccountProbe struct {
-	Client     *req.Client
-	HTTPClient *req.Client // 备用，若 Client 为 nil 则用此
+	Client     *webdriver.HTTPClient
+	HTTPClient *webdriver.HTTPClient // 备用，若 Client 为 nil 则用此
 
 	MeURL   string // 默认 https://chatgpt.com/backend-api/me
 	InitURL string // 默认 https://chatgpt.com/backend-api/conversation/init
@@ -72,7 +71,7 @@ func (p *AccountProbe) now() time.Time {
 // 误报，标 nolint 抑制。
 //
 //nolint:unused
-func (p *AccountProbe) httpClient() *req.Client {
+func (p *AccountProbe) httpClient() *webdriver.HTTPClient {
 	if p.Client != nil {
 		return p.Client
 	}

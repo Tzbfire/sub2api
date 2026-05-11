@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/imroc/req/v3"
 	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 
@@ -272,7 +271,7 @@ func gcd(a, b int) int {
 
 func prepareConversation(
 	ctx context.Context,
-	client *req.Client,
+	client *HTTPClient,
 	headers http.Header,
 	baseURL string,
 	prompt, parentMessageID, requirementsToken, proofToken, model string,
@@ -401,7 +400,7 @@ func buildConversationPayload(model, prompt, parentMessageID string, uploads []u
 // 文本分类（policy refusal / protocol error）统一在 driver.go 通过 polling fallback
 // 拿到完整 message tree 后做。
 func readSSE(
-	resp *req.Response,
+	resp *HTTPResponse,
 	startTime time.Time,
 	expectedImages int,
 	excludedPointers map[string]struct{},
@@ -847,7 +846,7 @@ func truncate(s string, n int) string {
 // pollConversation 兜底轮询 conversation 接口直到拿到可下载 pointer 或超时。
 func pollConversation(
 	ctx context.Context,
-	client *req.Client,
+	client *HTTPClient,
 	headers http.Header,
 	baseConvURL string,
 	conversationID string,

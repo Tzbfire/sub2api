@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/imroc/req/v3"
 )
 
 // 与 chatgpt2api/services/openai_backend_api.py 对齐的浏览器指纹常量。
@@ -19,29 +17,24 @@ const (
 	defaultAcceptLanguage    = "zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7"
 )
 
-// newHTTPClient 构造带 Chromium TLS 指纹的 imroc/req 客户端。
-// 传入的 fingerprint 决定了 TLS ClientHello 字节序列；调用方负责选取与账号绑定的同款 Fingerprint
+// newHTTPClient 构造带"真 Chrome 指纹"（TLS + HTTP/2）的客户端。
+// 传入的 fingerprint 决定 TLS+HTTP/2 字节序列；调用方负责选取与账号绑定的同款 Fingerprint
 // 给 buildHeaders / buildBootstrapHeaders，确保 TLS 与 HTTP 头声明的浏览器一致。
-func newHTTPClient(proxyURL string, fp Fingerprint) (*req.Client, error) {
-	c := req.C().
-		SetTimeout(180 * time.Second).
-		ImpersonateChrome().
-		SetTLSFingerprint(fp.TLSHello)
-	// ImpersonateChrome 把一组「浏览器地址栏导航」专用头注册为公共头
-	// （Upgrade-Insecure-Requests / Sec-Fetch-User / Sec-Fetch-Mode=navigate /
-	//  Sec-Fetch-Dest=document / Sec-Fetch-Site=none / Accept=text/html…）。
-	// 这些头只应出现在 GET chatgpt.com/ 这种导航请求里；XHR/fetch 调用 backend-api
-	// 时绝对不会出现。Cloudflare 通过 JA4H（请求头指纹）识别出这种异常组合后会
-	// 直接 403。buildHeaders / buildBootstrapHeaders 已经为各自场景显式声明了
-	// 应该出现的 Sec-Fetch-* 与 Accept；这里把"只在导航时出现"的两个头从公共
-	// 头里删除，避免它们作为默认值附加到 XHR 请求上。
-	if c.Headers != nil {
-		c.Headers.Del("Upgrade-Insecure-Requests")
-		c.Headers.Del("Sec-Fetch-User")
+//
+// 旧实现使用 imroc/req + utls，因 HTTP/2 帧指纹仍是 Go net/http 默认值，被 Cloudflare
+// JA4_H + Akamai_H2 联合检测稳定 403。当前实现切换到 bogdanfinn/tls-client，提供完整
+// TLS+HTTP/2 字节级伪装。
+//
+// 返回的 *HTTPClient 暴露与 imroc/req 形似的链式 API（见 tlsfacade.go），方便包内调用。
+func newHTTPClient(proxyURL string, fp Fingerprint) (*HTTPClient, error) {
+	c, err := newTLSHTTPClient(proxyURL, fp, 180*time.Second)
+	if err != nil {
+		return nil, err
 	}
-	if trimmed := strings.TrimSpace(proxyURL); trimmed != "" {
-		c.SetProxyURL(trimmed)
-	}
+	// 不主动注入"浏览器导航"专用公共头（旧的 imroc/req ImpersonateChrome 会附带
+	// Upgrade-Insecure-Requests / Sec-Fetch-User=?1 等只在导航请求中出现的头，导致
+	// XHR/fetch 调用 backend-api 时被 CF JA4H 识别为异常组合）。
+	// buildHeaders / buildBootstrapHeaders 已经为各自场景显式声明所需 Sec-Fetch-* 与 Accept。
 	return c, nil
 }
 

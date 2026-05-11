@@ -34,17 +34,18 @@ func TestPickFingerprintSpread(t *testing.T) {
 func TestFingerprintProfilesConsistent(t *testing.T) {
 	// 健全性：每个 profile 的 sec-ch-ua 主版本必须出现在 UA 字符串里。
 	for _, fp := range fingerprints {
-		// 从 SecChUaFullVersion 抽出主版本（第一个 . 之前）
-		ver := fp.SecChUaFullVersion
-		if len(ver) < 4 || ver[0] != '"' {
-			t.Fatalf("%s: SecChUaFullVersion shape unexpected: %q", fp.Name, ver)
+		// Safari iOS profile 不带 sec-ch-ua（与真实 Safari 行为一致）。
+		if fp.SecChUaFullVersion != "" {
+			ver := fp.SecChUaFullVersion
+			if len(ver) < 4 || ver[0] != '"' {
+				t.Fatalf("%s: SecChUaFullVersion shape unexpected: %q", fp.Name, ver)
+			}
+			if !contains(fp.UserAgent, fp.SecChUaFullVersion[1:4]) {
+				t.Fatalf("%s: UA %q does not contain version prefix %q", fp.Name, fp.UserAgent, fp.SecChUaFullVersion[1:4])
+			}
 		}
-		// 期待 UA 中至少出现 sec-ch-ua 中声明的主版本号
-		if !contains(fp.UserAgent, fp.SecChUaFullVersion[1:4]) {
-			t.Fatalf("%s: UA %q does not contain version prefix %q", fp.Name, fp.UserAgent, fp.SecChUaFullVersion[1:4])
-		}
-		if fp.TLSHello.Client == "" {
-			t.Fatalf("%s: TLSHello empty", fp.Name)
+		if fp.Profile.GetClientHelloId().Client == "" {
+			t.Fatalf("%s: Profile.ClientHelloId empty", fp.Name)
 		}
 	}
 }

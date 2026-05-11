@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/imroc/req/v3"
 )
 
 // uploadFiles 执行 ChatGPT 三步上传协议：
@@ -16,7 +14,7 @@ import (
 //  3. POST /backend-api/files/{id}/uploaded → 确认完成
 func uploadFiles(
 	ctx context.Context,
-	client *req.Client,
+	client *HTTPClient,
 	headers http.Header,
 	baseFilesURL string,
 	uploads []Upload,

@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/imroc/req/v3"
 	"github.com/tidwall/gjson"
 )
 
@@ -93,7 +91,7 @@ func (e *ModelNoImageError) Error() string {
 
 // classifyHTTPError 把 req.Response.IsErrorState 的响应分类为合适的 typed error。
 // fallback 给出错误信息默认值。
-func classifyHTTPError(resp *req.Response, fallback string) error {
+func classifyHTTPError(resp *HTTPResponse, fallback string) error {
 	if resp == nil {
 		return errors.New(fallback)
 	}

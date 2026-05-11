@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/imroc/req/v3"
 	"go.uber.org/zap"
 
 	pkglogger "github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -189,7 +188,7 @@ func (d *Driver) Forward(ctx context.Context, in *Request) (*Result, error) {
 
 func (d *Driver) downloadAll(
 	ctx context.Context,
-	client *req.Client,
+	client *HTTPClient,
 	headers http.Header,
 	conversationID string,
 	pointers []pointerInfo,

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/imroc/req/v3"
 	"go.uber.org/zap"
 
 	pkglogger "github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -65,7 +63,7 @@ func ResetBootstrapCacheForTest() {
 }
 
 // bootstrap 预热 chatgpt.com 并解析 sentinel SDK 资源。失败安全：返回兜底。
-func bootstrap(ctx context.Context, client *req.Client, headers http.Header, baseURL string) ([]string, string) {
+func bootstrap(ctx context.Context, client *HTTPClient, headers http.Header, baseURL string) ([]string, string) {
 	if scripts, db, ok := loadBootstrap(); ok && baseURL == startURL {
 		return scripts, db
 	}
@@ -138,7 +136,7 @@ func bootstrap(ctx context.Context, client *req.Client, headers http.Header, bas
 }
 
 // initConversation 调 /backend-api/conversation/init。失败不阻塞主流程（与上游 web 行为一致）。
-func initConversation(ctx context.Context, client *req.Client, headers http.Header, baseURL string) error {
+func initConversation(ctx context.Context, client *HTTPClient, headers http.Header, baseURL string) error {
 	h := withTargetPath(headers, targetPathOf(baseURL))
 	resp, err := client.R().
 		SetContext(ctx).
@@ -163,7 +161,7 @@ func initConversation(ctx context.Context, client *req.Client, headers http.Head
 // fetchChatRequirements 拿 sentinel token + PoW 参数。先用 requirements token 试，失败回退 nil。
 func fetchChatRequirements(
 	ctx context.Context,
-	client *req.Client,
+	client *HTTPClient,
 	headers http.Header,
 	baseURL string,
 	scriptSources []string,
