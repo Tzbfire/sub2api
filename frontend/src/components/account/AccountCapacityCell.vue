@@ -32,11 +32,26 @@
     <QuotaBadge v-if="showDailyQuota" :used="account.quota_daily_used ?? 0" :limit="account.quota_daily_limit!" label="D" />
     <QuotaBadge v-if="showWeeklyQuota" :used="account.quota_weekly_used ?? 0" :limit="account.quota_weekly_limit!" label="W" />
     <QuotaBadge v-if="showTotalQuota" :used="account.quota_used ?? 0" :limit="account.quota_limit!" />
+
+    <!-- Kiro 配额（来自 extra.kiro_usage_data） -->
+    <button
+      v-if="showKiroQuota"
+      type="button"
+      :title="kiroQuotaTitle"
+      class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition-opacity disabled:opacity-50"
+      :class="kiroQuotaClass"
+      :disabled="kiroRefreshing"
+      @click.stop="handleKiroRefresh"
+    >
+      <svg v-if="!kiroRefreshing" class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+      <svg v-else class="h-2.5 w-2.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+      Kiro {{ kiroCurrentUsage }}/{{ kiroUsageLimit }}
+    </button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Account } from '@/types'
 import CapacityBadge from '@/components/account/CapacityBadge.vue'
@@ -187,4 +202,45 @@ const showWeeklyQuota = computed(() =>
 const showTotalQuota = computed(() =>
   isQuotaEligible.value && props.account.quota_limit != null && props.account.quota_limit > 0
 )
+
+// ====== Kiro 配额 ======
+const kiroBreakdown = computed(() => {
+  const data = (props.account.extra as Record<string, any> | undefined)?.kiro_usage_data
+  const list = data?.usageBreakdownList
+  if (!Array.isArray(list) || list.length === 0) return null
+  const first = list[0] || {}
+  const cur = Number(first.currentUsage ?? 0) || 0
+  const lim = Number(first.usageLimit ?? 0) || 0
+  const overage = !!first?.overageConfiguration?.overageEnabled
+  return { cur, lim, overage }
+})
+const showKiroQuota = computed(() => props.account.platform === 'kiro' && kiroBreakdown.value !== null)
+const kiroCurrentUsage = computed(() => kiroBreakdown.value?.cur ?? 0)
+const kiroUsageLimit = computed(() => kiroBreakdown.value?.lim ?? 0)
+const kiroQuotaClass = computed(() => {
+  const b = kiroBreakdown.value
+  if (!b || b.lim <= 0) return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+  const ratio = b.cur / b.lim
+  if (b.cur >= b.lim && !b.overage) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+  if (ratio >= 0.8) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+  return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+})
+const kiroQuotaTitle = computed(() => {
+  const b = kiroBreakdown.value
+  if (!b) return '点击刷新 Kiro 配额'
+  return `Kiro 配额 ${b.cur}/${b.lim}${b.overage ? '（已开启 overage）' : ''}\n点击刷新`
+})
+
+const emit = defineEmits<{ (e: 'kiro-refresh', accountId: number): void }>()
+const kiroRefreshing = ref(false)
+async function handleKiroRefresh() {
+  if (kiroRefreshing.value) return
+  kiroRefreshing.value = true
+  try {
+    emit('kiro-refresh', props.account.id)
+  } finally {
+    // 父组件刷新结束后会更新 account.extra；这里给 800ms 防抖
+    setTimeout(() => { kiroRefreshing.value = false }, 800)
+  }
+}
 </script>

@@ -861,6 +861,13 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 				newCredentials[k] = v
 			}
 		}
+	} else if account.IsKiro() {
+		// Kiro: 通过 KiroTokenService 刷新（无状态服务，按需构造）
+		tokenInfo, err := service.NewKiroTokenService().RefreshAccountToken(ctx, account, "")
+		if err != nil {
+			return nil, "", err
+		}
+		newCredentials = service.ApplyKiroTokenInfo(account, tokenInfo)
 	} else if account.Platform == service.PlatformAntigravity {
 		tokenInfo, err := h.antigravityOAuthService.RefreshAccountToken(ctx, account)
 		if err != nil {
@@ -1950,6 +1957,12 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	if account.Platform == service.PlatformAntigravity {
 		// 直接复用 antigravity.DefaultModels()，与 /v1/models 端点保持同步
 		response.Success(c, antigravity.DefaultModels())
+		return
+	}
+
+	// Handle Kiro accounts: 仅暴露 Kiro 内部 ID（避免 UI 选 Anthropic 公开 ID 触发 INVALID_MODEL_ID）
+	if account.IsKiro() {
+		response.Success(c, service.KiroDefaultModels)
 		return
 	}
 

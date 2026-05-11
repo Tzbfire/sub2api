@@ -37,6 +37,15 @@ const (
 	PlatformOpenAI      = domain.PlatformOpenAI
 	PlatformGemini      = domain.PlatformGemini
 	PlatformAntigravity = domain.PlatformAntigravity
+	PlatformKiro        = domain.PlatformKiro
+)
+
+// Kiro constants
+const (
+	KiroAuthMethodSocial = domain.KiroAuthMethodSocial
+	KiroAuthMethodIdC    = domain.KiroAuthMethodIdC
+	KiroDefaultRegion    = domain.KiroDefaultRegion
+	KiroIDEUserAgentTmpl = domain.KiroIDEUserAgentTmpl
 )
 
 // Account type constants

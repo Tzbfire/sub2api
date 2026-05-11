@@ -579,6 +579,66 @@ export async function importData(payload: {
   return data
 }
 
+export interface KiroImportItemResult {
+  index: number
+  id?: string
+  email?: string
+  created: boolean
+  error?: string
+}
+
+export interface KiroImportResponse {
+  results: KiroImportItemResult[]
+  summary: { total: number; succeeded: number; failed: number }
+}
+
+export async function importKiro(payload: {
+  items: unknown[]
+  group_ids?: number[]
+  concurrency?: number
+}): Promise<KiroImportResponse> {
+  const { data } = await apiClient.post<KiroImportResponse>('/admin/accounts/kiro/import', payload)
+  return data
+}
+
+export interface KiroUsageRefreshResponse {
+  usage: Record<string, unknown>
+  capped: boolean
+  account: Record<string, unknown>
+}
+
+export async function refreshKiroUsage(accountId: number): Promise<KiroUsageRefreshResponse> {
+  const { data } = await apiClient.post<KiroUsageRefreshResponse>(
+    `/admin/accounts/${accountId}/kiro-usage`
+  )
+  return data
+}
+
+export interface KiroBatchUsageItem {
+  account_id: number
+  name: string
+  ok: boolean
+  error?: string
+  capped?: boolean
+}
+
+export interface KiroBatchUsageResponse {
+  total: number
+  success: number
+  failed: number
+  results: KiroBatchUsageItem[]
+}
+
+export async function batchRefreshKiroUsage(
+  accountIds?: number[]
+): Promise<KiroBatchUsageResponse> {
+  const { data } = await apiClient.post<KiroBatchUsageResponse>(
+    '/admin/accounts/kiro/batch-refresh-usage',
+    { account_ids: accountIds ?? [] }
+  )
+  return data
+}
+
 /**
  * Get Antigravity default model mapping from backend
  * @returns Default model mapping (from -> to)
@@ -697,6 +757,9 @@ export const accountsAPI = {
   syncFromCrs,
   exportData,
   importData,
+  importKiro,
+  refreshKiroUsage,
+  batchRefreshKiroUsage,
   getAntigravityDefaultModelMapping,
   batchClearError,
   batchRefresh,

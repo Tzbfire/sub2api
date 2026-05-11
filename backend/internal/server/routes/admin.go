@@ -295,6 +295,11 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.POST("/batch-clear-error", h.Admin.Account.BatchClearError)
 		accounts.POST("/batch-refresh", h.Admin.Account.BatchRefresh)
 
+		// Kiro 账号管理（kiro-account-manager JSON 导入 + usage probe）
+		accounts.POST("/kiro/import", h.Admin.Account.ImportKiro)
+		accounts.POST("/:id/kiro-usage", h.Admin.Account.RefreshKiroUsage)
+		accounts.POST("/kiro/batch-refresh-usage", h.Admin.Account.BatchRefreshKiroUsage)
+
 		// Antigravity 默认模型映射
 		accounts.GET("/antigravity/default-model-mapping", h.Admin.Account.GetAntigravityDefaultModelMapping)
 

@@ -121,6 +121,12 @@
               <button @click="showImportData = true" class="btn btn-secondary">
                 {{ t('admin.accounts.dataImport') }}
               </button>
+              <button @click="showImportKiro = true" class="btn btn-secondary">
+                导入 Kiro 账号
+              </button>
+              <button @click="handleBatchRefreshKiroUsage" :disabled="batchKiroRefreshing" class="btn btn-secondary">
+                {{ batchKiroRefreshing ? '刷新中…' : '批量刷新 Kiro 配额' }}
+              </button>
               <button @click="openExportDataDialog" class="btn btn-secondary">
                 {{ selIds.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport') }}
               </button>
@@ -187,7 +193,7 @@
           </template>
           <template #cell-platform_type="{ row }">
             <div class="flex flex-wrap items-center gap-1">
-              <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+              <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="getDisplayPlanType(row)" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
               <span
                 v-if="getOpenAICompactLabel(row)"
                 :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getOpenAICompactClass(row)]"
@@ -204,7 +210,7 @@
             </div>
           </template>
           <template #cell-capacity="{ row }">
-            <AccountCapacityCell :account="row" />
+            <AccountCapacityCell :account="row" @kiro-refresh="handleRefreshKiroUsage" />
           </template>
           <template #cell-status="{ row }">
             <div class="flex items-center gap-1.5">
@@ -303,6 +309,7 @@
     <AccountActionMenu :show="menu.show" :account="menu.acc" :position="menu.pos" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @reauth="handleReAuth" @refresh-token="handleRefresh" @refresh-image-quota="handleRefreshImageQuota" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
+    <ImportKiroModal :show="showImportKiro" @close="showImportKiro = false" @imported="handleKiroImported" />
     <BulkEditAccountModal
       :show="showBulkEdit"
       :account-ids="selIds"
@@ -348,6 +355,7 @@ import AccountTableFilters from '@/components/admin/account/AccountTableFilters.
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
+import ImportKiroModal from '@/components/admin/account/ImportKiroModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
@@ -417,6 +425,7 @@ const showCreate = ref(false)
 const showEdit = ref(false)
 const showSync = ref(false)
 const showImportData = ref(false)
+const showImportKiro = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
@@ -963,6 +972,22 @@ function getAntigravityTierFromRow(row: any): string | null {
   return null
 }
 
+// Kiro 订阅类型：从 extra.kiro_usage_data.subscriptionInfo.subscriptionTitle 提取
+// "KIRO FREE" -> "free"; "KIRO PRO" -> "pro"; PlatformTypeBadge 已支持 free/pro/plus/team 标签
+function getKiroPlanType(row: any): string | undefined {
+  if (row?.platform !== 'kiro') return undefined
+  const title = (row.extra as Record<string, any> | undefined)?.kiro_usage_data?.subscriptionInfo?.subscriptionTitle
+  if (typeof title !== 'string' || !title.trim()) return undefined
+  const parts = title.trim().split(/\s+/)
+  return parts[parts.length - 1].toLowerCase()
+}
+
+// 统一获取 PlatformTypeBadge 的 plan-type：Kiro 走 usageData，其他平台走 credentials.plan_type
+function getDisplayPlanType(row: any): string | undefined {
+  if (row?.platform === 'kiro') return getKiroPlanType(row)
+  return row?.credentials?.plan_type
+}
+
 function getAntigravityTierLabel(row: any): string | null {
   const tier = getAntigravityTierFromRow(row)
   switch (tier) {
@@ -1272,6 +1297,38 @@ const handleBulkUpdated = () => {
   reload()
 }
 const handleDataImported = () => { showImportData.value = false; reload() }
+const handleKiroImported = () => { showImportKiro.value = false; reload() }
+
+// ============== Kiro 配额刷新 ==============
+const batchKiroRefreshing = ref(false)
+async function handleRefreshKiroUsage(accountId: number) {
+  try {
+    const r = await adminAPI.accounts.refreshKiroUsage(accountId)
+    const idx = accounts.value.findIndex(a => a.id === accountId)
+    if (idx >= 0 && r.account) {
+      accounts.value[idx] = { ...accounts.value[idx], ...((r.account as unknown) as Account) }
+    }
+    appStore.showSuccess('Kiro 配额已刷新')
+  } catch (e: any) {
+    appStore.showError('Kiro 配额刷新失败: ' + (e?.message || String(e)))
+  }
+}
+async function handleBatchRefreshKiroUsage() {
+  if (batchKiroRefreshing.value) return
+  batchKiroRefreshing.value = true
+  try {
+    const ids = selIds.value.length > 0
+      ? accounts.value.filter(a => selIds.value.includes(a.id) && a.platform === 'kiro').map(a => a.id)
+      : undefined
+    const r = await adminAPI.accounts.batchRefreshKiroUsage(ids)
+    appStore.showSuccess(`Kiro 批量刷新：成功 ${r.success}/${r.total}，失败 ${r.failed}`)
+    reload()
+  } catch (e: any) {
+    appStore.showError('批量刷新失败: ' + (e?.message || String(e)))
+  } finally {
+    batchKiroRefreshing.value = false
+  }
+}
 const ACCOUNT_UNGROUPED_GROUP_QUERY_VALUE = 'ungrouped'
 const ACCOUNT_PRIVACY_MODE_UNSET_QUERY_VALUE = '__unset__'
 const buildAccountQueryFilters = () => ({

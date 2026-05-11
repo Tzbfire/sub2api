@@ -305,6 +305,33 @@
       <div v-else class="text-xs text-gray-400">-</div>
     </template>
 
+    <!-- Kiro OAuth accounts: show usage from extra.kiro_usage_data -->
+    <template v-else-if="account.platform === 'kiro' && account.type === 'oauth'">
+      <div v-if="kiroUsageDisplay" class="space-y-1">
+        <UsageProgressBar
+          label="Mo"
+          :utilization="kiroUsageDisplay.utilization"
+          :resets-at="kiroUsageDisplay.resetsAt"
+          color="indigo"
+        />
+        <div class="flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400">
+          <span class="font-mono">{{ kiroUsageDisplay.currentUsage }}/{{ kiroUsageDisplay.usageLimit }}</span>
+          <span>{{ kiroUsageDisplay.unit }}</span>
+          <span v-if="kiroUsageDisplay.overageEnabled" class="rounded bg-emerald-100 px-1 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">overage</span>
+        </div>
+        <div v-if="kiroUsageDisplay.trialActive && kiroUsageDisplay.trialLimit > 0" class="text-[10px] text-emerald-600 dark:text-emerald-400">
+          🎁 Trial: {{ kiroUsageDisplay.trialCurrent }}/{{ kiroUsageDisplay.trialLimit }}
+        </div>
+        <div v-else-if="kiroUsageDisplay.freeTrialStatus" class="text-[10px] text-gray-500 dark:text-gray-400">
+          Trial: {{ kiroUsageDisplay.freeTrialStatus }}
+        </div>
+        <div v-if="kiroUsageDisplay.bonusLimit > 0" class="text-[10px] text-purple-600 dark:text-purple-400">
+          ✨ Bonus: {{ kiroUsageDisplay.bonusCurrent }}/{{ kiroUsageDisplay.bonusLimit }}
+        </div>
+      </div>
+      <div v-else class="text-xs text-gray-400">-</div>
+    </template>
+
     <!-- Gemini platform: show quota + local usage window -->
     <template v-else-if="account.platform === 'gemini'">
       <!-- Auth Type + Tier Badge (first line) -->
@@ -636,6 +663,64 @@ const openAIImageQuotaState = computed(() => {
 
 const hasOpenAIUsageDisplay = computed(() => {
   return hasOpenAIUsageFallback.value || !!openAIImageQuotaState.value
+})
+
+// Kiro 用量：从 extra.kiro_usage_data 渲染（来自上游 GetUserUsageAndLimits CBOR 响应）
+// 总配额 = 主配额 + 激活的 free trial + 未过期且 ACTIVE 的 bonuses
+// 参考 hj01857655/kiro-account-manager:src/utils/accountStats.ts
+const kiroUsageDisplay = computed(() => {
+  if (props.account.platform !== 'kiro') return null
+  const data = (props.account.extra as Record<string, any> | undefined)?.kiro_usage_data
+  const list = data?.usageBreakdownList
+  if (!Array.isArray(list) || list.length === 0) return null
+  const first = list[0] || {}
+  const mainCur = Number(first.currentUsage ?? 0) || 0
+  const mainLim = Number(first.usageLimit ?? 0) || 0
+
+  // free trial pool（freeTrialStatus === 'ACTIVE' 才计入）
+  const trialInfo = first?.freeTrialInfo
+  const trialActive = trialInfo?.freeTrialStatus === 'ACTIVE'
+  const trialCur = trialActive ? (Number(trialInfo?.currentUsage ?? 0) || 0) : 0
+  const trialLim = trialActive ? (Number(trialInfo?.usageLimit ?? 0) || 0) : 0
+
+  // bonuses: 未过期且 ACTIVE
+  const nowMs = Date.now()
+  const bonuses = Array.isArray(first?.bonuses) ? first.bonuses : []
+  let bonusCur = 0
+  let bonusLim = 0
+  for (const b of bonuses) {
+    const expiryMs = typeof b?.expiresAt === 'number' && b.expiresAt > 0 ? b.expiresAt * 1000 : Infinity
+    if (expiryMs > nowMs && b?.status === 'ACTIVE') {
+      bonusCur += Number(b?.currentUsage ?? 0) || 0
+      bonusLim += Number(b?.usageLimit ?? 0) || 0
+    }
+  }
+
+  const totalCur = mainCur + trialCur + bonusCur
+  const totalLim = mainLim + trialLim + bonusLim
+  if (totalLim <= 0) return null
+  const utilization = Math.round((totalCur / totalLim) * 100)
+
+  let resetsAt: string | null = null
+  if (typeof first.nextDateReset === 'number' && first.nextDateReset > 0) {
+    resetsAt = new Date(first.nextDateReset * 1000).toISOString()
+  }
+  return {
+    utilization,
+    currentUsage: totalCur,
+    usageLimit: totalLim,
+    mainCurrent: mainCur,
+    mainLimit: mainLim,
+    trialActive,
+    trialCurrent: trialCur,
+    trialLimit: trialLim,
+    bonusCurrent: bonusCur,
+    bonusLimit: bonusLim,
+    unit: typeof first.unit === 'string' ? first.unit : 'INVOCATIONS',
+    overageEnabled: !!first?.overageConfiguration?.overageEnabled,
+    freeTrialStatus: typeof trialInfo?.freeTrialStatus === 'string' ? trialInfo.freeTrialStatus : null,
+    resetsAt
+  }
 })
 
 const openAIImageQuotaLabel = computed(() => {

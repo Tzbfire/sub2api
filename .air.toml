@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "backend/tmp"
 
 [build]
-cmd = "cd backend && go build -o ./tmp/sub2api-server ./cmd/server"
+cmd = "cd backend && go build -tags embed -o ./tmp/sub2api-server ./cmd/server"
 bin = "./backend/tmp/sub2api-server"
 full_bin = "DATA_DIR=backend ./backend/tmp/sub2api-server"
 include_ext = ["go", "yaml"]

@@ -131,9 +131,17 @@ docs/*
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
+!docs/KIRO_ACCOUNT_API.md
 .serena/
 .codex/
 frontend/coverage/
 aicodex
 output/
 .playwright-mcp/
+
+# Kiro 账号导入样例（含真实凭证，禁止入库）
+kiro-accounts*.json
+
+
+# pnpm interactive allowBuilds config (auto-generated, must not be committed)
+frontend/pnpm-workspace.yaml
