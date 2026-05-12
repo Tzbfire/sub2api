@@ -710,6 +710,41 @@ export async function importKiroSocialTokens(payload: {
   return data
 }
 
+// === Kiro 隔离状态管理 ===
+
+export interface KiroQuarantineEntry {
+  account_id: number
+  model?: string
+  not_before: string
+  remaining_ms: number
+  attempts?: number
+}
+
+export interface KiroQuarantineListResponse {
+  items: KiroQuarantineEntry[]
+  total: number
+}
+
+/** 获取当前所有生效的 Kiro 隔离条目（账号级 + (账号,模型) 级）。 */
+export async function listKiroQuarantine(): Promise<KiroQuarantineListResponse> {
+  const { data } = await apiClient.get<KiroQuarantineListResponse>(
+    '/admin/accounts/kiro/quarantine'
+  )
+  return data
+}
+
+/** 清除指定账号的隔离记录；model 非空则仅清除模型级，否则清账号级 + 该账号所有模型级。 */
+export async function clearKiroQuarantine(
+  accountId: number,
+  model?: string
+): Promise<{ cleared: string; account_id: number; model?: string }> {
+  const { data } = await apiClient.delete<{ cleared: string; account_id: number; model?: string }>(
+    `/admin/accounts/${accountId}/kiro/quarantine`,
+    { params: model ? { model } : undefined }
+  )
+  return data
+}
+
 /**
  * Get Antigravity default model mapping from backend
  * @returns Default model mapping (from -> to)

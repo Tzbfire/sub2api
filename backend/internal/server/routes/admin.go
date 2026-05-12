@@ -307,6 +307,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// Kiro Google/GitHub Social RefreshToken 批量导入
 		accounts.POST("/kiro/oauth/social-import", h.Admin.Account.ImportKiroSocialTokens)
 
+		// Kiro 隔离状态查看 / 清除
+		accounts.GET("/kiro/quarantine", h.Admin.Account.ListKiroQuarantine)
+		accounts.DELETE("/:id/kiro/quarantine", h.Admin.Account.ClearKiroQuarantine)
+
 		// Antigravity 默认模型映射
 		accounts.GET("/antigravity/default-model-mapping", h.Admin.Account.GetAntigravityDefaultModelMapping)
 

@@ -127,6 +127,7 @@ func (h *OpenAIGatewayHandler) KiroChatCompletions(c *gin.Context) {
 			c.Request.Context(),
 			apiKey.GroupID,
 			failedAccountIDs,
+			reqModel,
 		)
 		_ = sessionHash
 		if err != nil || selection == nil || selection.Account == nil {
@@ -158,25 +159,37 @@ func (h *OpenAIGatewayHandler) KiroChatCompletions(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
-				// Kiro 限流自动隔离：根据上游状态码 cooldown，下次调度跳过
-				cooldown := service.QuarantineKiroFromUpstreamError(account.ID, failoverErr.StatusCode, failoverErr.ResponseBody)
+
+				// 双层 quarantine + 错误分类：决定隔离 / 切号 / 透传
+				decision := service.HandleKiroUpstreamError(account.ID, reqModel, failoverErr.StatusCode, failoverErr.ResponseBody)
 				reqLog.Warn("kiro_chat_completions.upstream_error",
 					zap.Int64("account_id", account.ID),
 					zap.Int("upstream_status", failoverErr.StatusCode),
-					zap.Duration("cooldown", cooldown),
+					zap.String("class", string(decision.Class)),
+					zap.Duration("account_cooldown", decision.AccountCooldown),
+					zap.Duration("model_cooldown", decision.ModelCooldown),
+					zap.Bool("client_flood", decision.ClientFlood),
 				)
-				// 4xx 业务错误（非 401/403/423/429）= 客户端请求本身有问题，
-				// 换账号也无济于事，直接把上游响应原样回给客户端。
-				isClientReqBug := cooldown == 0 &&
-					failoverErr.StatusCode >= 400 && failoverErr.StatusCode < 500
-				if isClientReqBug {
+
+				// 仅在「真正应当归罪于本账号」时才扣调度分。
+				// ModelCapacity（上游模型整体过载）不是账号问题，跳过。
+				if decision.Class != service.KiroErrModelCapacity &&
+					decision.Class != service.KiroErrConversationTooLong &&
+					decision.Class != service.KiroErrInvalidRequest {
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
+				}
+
+				// 不切号场景：直接把上游响应原样回给客户端
+				//   - InvalidRequest / ConversationTooLong：客户端自己的请求问题
+				//   - ModelCapacity 且客户端 flood：避免一个客户端拖垮所有账号
+				if !decision.ShouldFailover {
 					h.handleFailoverExhausted(c, failoverErr, streamStarted)
 					return
 				}
+
 				if switchCount >= maxAccountSwitches {
 					h.handleFailoverExhausted(c, failoverErr, streamStarted)
 					return
@@ -206,8 +219,9 @@ func (h *OpenAIGatewayHandler) KiroChatCompletions(c *gin.Context) {
 		} else {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, true, nil)
 		}
-		// 成功后清除可能残留的隔离记录（极少出现，但保险起见）
+		// 成功后清除可能残留的隔离记录
 		service.ClearKiroQuarantine(account.ID)
+		service.ClearKiroModelCapacity(account.ID, reqModel)
 
 		// 接 RecordUsage：把 Kiro 估算 token 写入 usage 表（DB 统计/计费可见）。
 		// channelMapping 暂用 nil，billing 走默认；ResponseHeaders/Duration 等字段补齐。

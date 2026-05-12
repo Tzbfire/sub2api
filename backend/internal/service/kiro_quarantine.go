@@ -1,88 +1,323 @@
-// Kiro 账号限流隔离（in-memory 短期 cooldown）。
+// Kiro 账号 / (账号,模型) 双层隔离。
 //
-// Kiro 上游 429/423/throttling 时，立即把账号放进黑名单 N 分钟，
-// 期间 SelectKiroAccount 跳过它，避免重试风暴。
+// **背景**：Kiro 上游返回错误时按归属维度区分处理：
 //
-// 设计要点：
-//   - 完全 in-memory（sync.Map）：进程重启自动清空，符合"短期限流"语义
-//   - 默认 cooldown：429 / throttling → 5min；423 banned → 30min；其他 4xx/5xx → 60s
-//   - 独立于 RateLimitService 的 temp_unschedulable_rules（那个需要每账号配置规则）
+//	错误类型               隔离维度        Cooldown 策略
+//	-----------------------------------------------------
+//	ModelCapacity          (account,model) 指数退避（30→60→120→300s）
+//	AccountQuotaDaily      account         至次日 00:00 UTC
+//	AccountQuotaMonthly    account         至下月 1 日（DB 持久化，见 account_repo）
+//	AccountSuspended       account         DB persist banned
+//	AccessDenied           account         30min
+//	Auth                   account         5min（先 ForceRefresh 兜底）
+//	ConversationTooLong    —              不隔离（原样回客户端）
+//	InvalidRequest         —              不隔离（原样回客户端）
+//	Transient              —              不隔离（仅本次切号）
+//
+// **设计要点**：
+//   - 模型级 (account,model) → 指数退避；成功一次清零 attempts
+//   - 账号级 → 固定时长 cooldown
+//   - DB 持久化（quota/suspended）由 SelectKiroAccount 在 DB 查询层过滤，
+//     这里只保留 in-memory 短期 cooldown
+//   - 客户端续命循环防御：同 (account,model) 1min 内 >5 次命中
+//     ModelCapacity → 提前透传，不切号（避免拉满所有账号）
 package service
 
 import (
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 )
 
+// === Cooldown 默认值 ===
 const (
-	kiroQuarantineDefault = 60 * time.Second
-	kiroQuarantine429     = 5 * time.Minute
-	kiroQuarantine423     = 30 * time.Minute
-	kiroQuarantineAuth    = 5 * time.Minute
+	kiroQuarantineAccountAccessDenied = 30 * time.Minute
+	kiroQuarantineAccountAuth         = 5 * time.Minute
+	kiroQuarantineAccountTransient    = 60 * time.Second // 兜底，未来移除
+
+	kiroModelCapacityBaseDelay         = 30 * time.Second
+	kiroModelCapacityMaxDelay          = 5 * time.Minute
+	kiroModelCapacityResetAfter        = 10 * time.Minute // attempts 多久不命中后清零
+	kiroModelCapacityClientFloodN      = 5
+	kiroModelCapacityClientFloodWindow = time.Minute
 )
 
-var kiroQuarantineMap sync.Map // accountID(int64) → notBefore(time.Time)
+// === in-memory 状态 ===
 
-// IsKiroQuarantined 检查账号是否处于 cooldown。已过期会顺手清理。
-func IsKiroQuarantined(accountID int64) bool {
-	v, ok := kiroQuarantineMap.Load(accountID)
+// 账号级 cooldown：accountID(int64) → notBefore(time.Time)
+var kiroAccountQuarantineMap sync.Map
+
+// 模型级状态：(accountID, model) → *kiroModelState
+var kiroModelQuarantineMap sync.Map
+
+type kiroModelState struct {
+	mu         sync.Mutex
+	notBefore  time.Time
+	attempts   int         // 连续 ModelCapacity 命中次数（决定退避指数）
+	lastHit    time.Time   // 最近一次命中
+	clientHits []time.Time // 最近 N 次命中（防客户端续命循环）
+}
+
+type kiroModelKey struct {
+	AccountID int64
+	Model     string
+}
+
+// === 账号级 API（兼容原 IsKiroQuarantined / ClearKiroQuarantine）===
+
+// IsKiroAccountQuarantined 账号级 cooldown 检查（已过期自动清理）。
+func IsKiroAccountQuarantined(accountID int64) bool {
+	v, ok := kiroAccountQuarantineMap.Load(accountID)
 	if !ok {
 		return false
 	}
 	notBefore, ok := v.(time.Time)
 	if !ok {
-		kiroQuarantineMap.Delete(accountID)
+		kiroAccountQuarantineMap.Delete(accountID)
 		return false
 	}
 	if time.Now().After(notBefore) {
-		kiroQuarantineMap.Delete(accountID)
+		kiroAccountQuarantineMap.Delete(accountID)
 		return false
 	}
 	return true
 }
 
-// QuarantineKiroAccount 把账号放入隔离区，duration 为持续时间。
+// IsKiroQuarantined 历史 API（兼容旧 selector 调用）。
+func IsKiroQuarantined(accountID int64) bool {
+	return IsKiroAccountQuarantined(accountID)
+}
+
+// QuarantineKiroAccount 账号级隔离，duration<=0 视为不隔离。
 func QuarantineKiroAccount(accountID int64, duration time.Duration) {
 	if duration <= 0 {
 		return
 	}
-	kiroQuarantineMap.Store(accountID, time.Now().Add(duration))
+	kiroAccountQuarantineMap.Store(accountID, time.Now().Add(duration))
 }
 
-// QuarantineKiroFromUpstreamError 根据上游状态码与响应体推断 cooldown 时长。
-// 5xx（除 503/529）与网络错误不隔离 — 通常是上游临时抖动，不该惩罚账号。
-func QuarantineKiroFromUpstreamError(accountID int64, statusCode int, body []byte) time.Duration {
-	bodyLower := strings.ToLower(string(body))
-	var dur time.Duration
-	switch {
-	case statusCode == http.StatusTooManyRequests, // 429
-		strings.Contains(bodyLower, "throttl"),
-		strings.Contains(bodyLower, "rate limit"),
-		strings.Contains(bodyLower, "quota"),
-		strings.Contains(bodyLower, "monthly_request_count"),
-		strings.Contains(bodyLower, "request_limit_exceeded"):
-		dur = kiroQuarantine429
-	case statusCode == http.StatusLocked, // 423
-		strings.Contains(bodyLower, "banned"),
-		strings.Contains(bodyLower, "suspend"):
-		dur = kiroQuarantine423
-	case statusCode == http.StatusUnauthorized,
-		statusCode == http.StatusForbidden:
-		dur = kiroQuarantineAuth
-	case statusCode == http.StatusServiceUnavailable, // 503
-		statusCode == 529:
-		dur = kiroQuarantineDefault
-	default:
-		// 4xx 其他、5xx 网络抖动等：不隔离，仅本次请求切换账号
-		return 0
-	}
-	QuarantineKiroAccount(accountID, dur)
-	return dur
-}
-
-// ClearKiroQuarantine 立即解除隔离（admin UI 操作 / 手动 refresh 成功后调用）。
+// ClearKiroQuarantine 清除账号级 cooldown（同时清掉该账号所有模型级状态）。
 func ClearKiroQuarantine(accountID int64) {
-	kiroQuarantineMap.Delete(accountID)
+	kiroAccountQuarantineMap.Delete(accountID)
+	kiroModelQuarantineMap.Range(func(k, _ any) bool {
+		if mk, ok := k.(kiroModelKey); ok && mk.AccountID == accountID {
+			kiroModelQuarantineMap.Delete(k)
+		}
+		return true
+	})
 }
+
+// === 模型级 API ===
+
+// IsKiroModelQuarantined (账号,模型) 维度 cooldown 检查。
+func IsKiroModelQuarantined(accountID int64, model string) bool {
+	v, ok := kiroModelQuarantineMap.Load(kiroModelKey{accountID, model})
+	if !ok {
+		return false
+	}
+	st, ok := v.(*kiroModelState)
+	if !ok {
+		return false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return time.Now().Before(st.notBefore)
+}
+
+// HitModelCapacity 记录一次 ModelCapacity 命中，返回 (cooldown, isClientFlood)。
+//
+// isClientFlood = true 表示 1 分钟内同 (account,model) >N 次命中，
+// 上层应直接透传 429 给客户端而不再切号。
+func HitModelCapacity(accountID int64, model string) (time.Duration, bool) {
+	key := kiroModelKey{accountID, model}
+	v, _ := kiroModelQuarantineMap.LoadOrStore(key, &kiroModelState{})
+	st := v.(*kiroModelState)
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	now := time.Now()
+
+	// 长时间未命中 → attempts 清零
+	if !st.lastHit.IsZero() && now.Sub(st.lastHit) > kiroModelCapacityResetAfter {
+		st.attempts = 0
+		st.clientHits = st.clientHits[:0]
+	}
+
+	st.attempts++
+	st.lastHit = now
+
+	// 指数退避：base * 2^(attempts-1)，封顶 max
+	delay := kiroModelCapacityBaseDelay << (st.attempts - 1)
+	if delay > kiroModelCapacityMaxDelay || delay <= 0 {
+		delay = kiroModelCapacityMaxDelay
+	}
+	st.notBefore = now.Add(delay)
+
+	// 客户端 flood 检测：保留窗口内时间戳
+	cutoff := now.Add(-kiroModelCapacityClientFloodWindow)
+	kept := st.clientHits[:0]
+	for _, t := range st.clientHits {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	kept = append(kept, now)
+	st.clientHits = kept
+	flood := len(kept) >= kiroModelCapacityClientFloodN
+
+	return delay, flood
+}
+
+// ClearKiroModelCapacity 成功一次清零（在 chat 200 响应后调用）。
+func ClearKiroModelCapacity(accountID int64, model string) {
+	kiroModelQuarantineMap.Delete(kiroModelKey{accountID, model})
+}
+
+// ClearKiroModelQuarantine 仅清模型级（admin UI per-model 清除）。
+func ClearKiroModelQuarantine(accountID int64, model string) {
+	kiroModelQuarantineMap.Delete(kiroModelKey{accountID, model})
+}
+
+// === 错误归一入口 ===
+
+// QuarantineDecision 处理结果，handler 据此决定客户端响应与切号。
+type QuarantineDecision struct {
+	Class           KiroErrorClass
+	AccountCooldown time.Duration // >0 = 账号级隔离时长
+	ModelCooldown   time.Duration // >0 = 模型级隔离时长
+	ShouldFailover  bool          // true = 切其他账号；false = 直接回客户端
+	PassthroughBody bool          // true = 用上游原始 body 回客户端
+	ClientFlood     bool          // true = 客户端在反复重试，建议直接透传
+}
+
+// HandleKiroUpstreamError 综合分类 + 应用隔离 + 返回处理决策。
+//
+// model 参数为本次请求的目标模型（已是 Kiro 内部模型 ID，如 claude-opus-4.7）。
+// 若 model == ""（路由前出错等），ModelCapacity 退化为账号级 60s cooldown。
+func HandleKiroUpstreamError(accountID int64, model string, statusCode int, body []byte) QuarantineDecision {
+	class := ClassifyKiroError(statusCode, body)
+	d := QuarantineDecision{Class: class, ShouldFailover: true}
+
+	switch class {
+	case KiroErrModelCapacity:
+		if model != "" {
+			delay, flood := HitModelCapacity(accountID, model)
+			d.ModelCooldown = delay
+			d.ClientFlood = flood
+			// flood 时透传给客户端，不再切号（避免一个客户端拖垮所有账号）
+			if flood {
+				d.ShouldFailover = false
+				d.PassthroughBody = true
+			}
+		} else {
+			d.AccountCooldown = kiroQuarantineAccountTransient
+			QuarantineKiroAccount(accountID, d.AccountCooldown)
+		}
+
+	case KiroErrAccountQuotaDaily:
+		// 至次日 00:00 UTC
+		now := time.Now().UTC()
+		next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+		d.AccountCooldown = next.Sub(now)
+		QuarantineKiroAccount(accountID, d.AccountCooldown)
+
+	case KiroErrAccountQuotaMonthly:
+		// 至下月 1 日 00:00 UTC（in-memory；真实持久化由 DB 字段处理，phase 3）
+		now := time.Now().UTC()
+		next := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+		d.AccountCooldown = next.Sub(now)
+		QuarantineKiroAccount(accountID, d.AccountCooldown)
+
+	case KiroErrAccountSuspended:
+		// 也是临时（数小时～天），先给 30min；DB 持久化由 phase 3 改 status=banned
+		d.AccountCooldown = kiroQuarantineAccountAccessDenied
+		QuarantineKiroAccount(accountID, d.AccountCooldown)
+
+	case KiroErrAccessDenied:
+		d.AccountCooldown = kiroQuarantineAccountAccessDenied
+		QuarantineKiroAccount(accountID, d.AccountCooldown)
+
+	case KiroErrAuth:
+		// ForceRefresh 由 chat_service 完成；这里只在最终失败兜底
+		d.AccountCooldown = kiroQuarantineAccountAuth
+		QuarantineKiroAccount(accountID, d.AccountCooldown)
+
+	case KiroErrConversationTooLong, KiroErrInvalidRequest:
+		// 客户端 bug，原样回，不切号也不隔离
+		d.ShouldFailover = false
+		d.PassthroughBody = true
+
+	case KiroErrTransient, KiroErrUnknown:
+		// 切号本次重试，不隔离
+	}
+
+	return d
+}
+
+// === 兼容性 wrapper（保留旧 API 避免一次性改太多调用方）===
+
+// QuarantineKiroFromUpstreamError 历史 API：基于 (status, body) 推断账号级 cooldown。
+//
+// Deprecated: 新代码请用 HandleKiroUpstreamError 拿到完整 QuarantineDecision。
+func QuarantineKiroFromUpstreamError(accountID int64, statusCode int, body []byte) time.Duration {
+	d := HandleKiroUpstreamError(accountID, "", statusCode, body)
+	return d.AccountCooldown
+}
+
+// === Inspector：admin UI 列表用 ===
+
+// KiroQuarantineSnapshot 隔离状态快照（用于 admin REST GET）。
+type KiroQuarantineSnapshot struct {
+	AccountID       int64
+	Model           string // 空 = 账号级
+	NotBefore       time.Time
+	RemainingMillis int64
+	Attempts        int
+}
+
+// SnapshotKiroQuarantine 列出所有当前生效的隔离条目。
+func SnapshotKiroQuarantine() []KiroQuarantineSnapshot {
+	var out []KiroQuarantineSnapshot
+	now := time.Now()
+
+	kiroAccountQuarantineMap.Range(func(k, v any) bool {
+		acctID, _ := k.(int64)
+		notBefore, _ := v.(time.Time)
+		if now.Before(notBefore) {
+			out = append(out, KiroQuarantineSnapshot{
+				AccountID:       acctID,
+				NotBefore:       notBefore,
+				RemainingMillis: notBefore.Sub(now).Milliseconds(),
+			})
+		}
+		return true
+	})
+
+	kiroModelQuarantineMap.Range(func(k, v any) bool {
+		mk, _ := k.(kiroModelKey)
+		st, _ := v.(*kiroModelState)
+		if st == nil {
+			return true
+		}
+		st.mu.Lock()
+		nb := st.notBefore
+		att := st.attempts
+		st.mu.Unlock()
+		if now.Before(nb) {
+			out = append(out, KiroQuarantineSnapshot{
+				AccountID:       mk.AccountID,
+				Model:           mk.Model,
+				NotBefore:       nb,
+				RemainingMillis: nb.Sub(now).Milliseconds(),
+				Attempts:        att,
+			})
+		}
+		return true
+	})
+
+	return out
+}
+
+// === HTTP 状态码常量 re-export 供 handler 用 ===
+var _ = http.StatusServiceUnavailable

@@ -127,6 +127,9 @@
               <button @click="handleBatchRefreshKiroUsage" :disabled="batchKiroRefreshing" class="btn btn-secondary">
                 {{ batchKiroRefreshing ? '刷新中…' : '批量刷新 Kiro 配额' }}
               </button>
+              <button @click="showKiroQuarantine = true" class="btn btn-secondary">
+                Kiro 隔离状态
+              </button>
               <button @click="openExportDataDialog" class="btn btn-secondary">
                 {{ selIds.length ? t('admin.accounts.dataExportSelected') : t('admin.accounts.dataExport') }}
               </button>
@@ -318,6 +321,7 @@
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <ImportKiroModal :show="showImportKiro" @close="showImportKiro = false" @imported="handleKiroImported" />
+    <KiroQuarantineModal :show="showKiroQuarantine" @close="showKiroQuarantine = false" />
     <BulkEditAccountModal
       :show="showBulkEdit"
       :account-ids="selIds"
@@ -364,6 +368,7 @@ import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActions
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ImportKiroModal from '@/components/admin/account/ImportKiroModal.vue'
+import KiroQuarantineModal from '@/components/admin/account/KiroQuarantineModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
@@ -434,6 +439,7 @@ const showEdit = ref(false)
 const showSync = ref(false)
 const showImportData = ref(false)
 const showImportKiro = ref(false)
+const showKiroQuarantine = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)

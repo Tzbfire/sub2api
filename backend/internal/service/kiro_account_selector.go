@@ -21,6 +21,7 @@ func (s *OpenAIGatewayService) SelectKiroAccount(
 	ctx context.Context,
 	groupID *int64,
 	excludedIDs map[int64]struct{},
+	model string,
 ) (*AccountSelectionResult, error) {
 	if s.accountRepo == nil {
 		return nil, errors.New("account repo not initialized")
@@ -50,6 +51,9 @@ func (s *OpenAIGatewayService) SelectKiroAccount(
 			continue
 		}
 		if IsKiroQuarantined(acct.ID) {
+			continue
+		}
+		if model != "" && IsKiroModelQuarantined(acct.ID, model) {
 			continue
 		}
 		if excludedIDs != nil {
