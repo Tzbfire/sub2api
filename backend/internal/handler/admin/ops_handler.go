@@ -71,7 +71,9 @@ func parseOpsViewParam(c *gin.Context) string {
 }
 
 func NewOpsHandler(opsService *service.OpsService) *OpsHandler {
-	return &OpsHandler{opsService: opsService}
+	return &OpsHandler{
+		opsService: opsService,
+	}
 }
 
 // GetErrorLogs lists ops error logs.

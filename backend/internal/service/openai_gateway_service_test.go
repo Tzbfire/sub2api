@@ -127,6 +127,14 @@ func (c stubConcurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID 
 	return nil
 }
 
+func (c stubConcurrencyCache) AcquireImageAccountSlot(_ context.Context, _ int64, _ int, _ string) (bool, error) {
+	return true, nil
+}
+
+func (c stubConcurrencyCache) ReleaseImageAccountSlot(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
 func (c stubConcurrencyCache) GetAccountsLoadBatch(ctx context.Context, accounts []AccountWithConcurrency) (map[int64]*AccountLoadInfo, error) {
 	if c.loadBatchErr != nil {
 		return nil, c.loadBatchErr

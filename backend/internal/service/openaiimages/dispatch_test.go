@@ -24,6 +24,7 @@ func (a *dispAccount) SessionID() string                    { return "" }
 func (a *dispAccount) ProxyURL() string                     { return "" }
 func (a *dispAccount) IsAPIKey() bool                       { return a.apikey }
 func (a *dispAccount) APIKey() string                       { return "sk" }
+func (a *dispAccount) MaxConcurrency() int                  { return 0 }
 func (a *dispAccount) LegacyImagesEnabled() bool            { return a.web }
 func (a *dispAccount) QuotaSnapshot() *AccountQuotaSnapshot { return nil }
 

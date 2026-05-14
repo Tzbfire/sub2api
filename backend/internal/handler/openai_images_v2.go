@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
@@ -40,17 +42,34 @@ type OpenAIImagesV2Handler struct {
 	billingCacheService   *service.BillingCacheService
 	apiKeyService         *service.APIKeyService
 	usageRecordWorkerPool *service.UsageRecordWorkerPool
+	concurrencyService    *service.ConcurrencyService
 
-	pool      *openaiimages.ImagePool
-	probe     *openaiimages.AccountProbe
-	source    *openaiimages.PoolBackedSource
-	registry  openaiimages.MapDriverRegistry
-	dispatchO openaiimages.DispatchOptions
-	cache     *openaiimages.ImageCache
-	settings  *service.SettingService
+	pool       *openaiimages.ImagePool
+	probe      *openaiimages.AccountProbe
+	source     *openaiimages.PoolBackedSource
+	registry   openaiimages.MapDriverRegistry
+	dispatchO  openaiimages.DispatchOptions
+	cache      *openaiimages.ImageCache
+	settings   *service.SettingService
+	opsService *service.OpsService
+
+	// 每实例图片网关并发上限（防 OOM）。
+	// inFlight 是当前正在执行的图片请求数；max 由 OpsService.GetImageGatewayRuntimeSettings 配置。
+	// max=0 表示不限。配置带 5s 缓存避免每请求都查 DB。
+	inFlight         atomic.Int64
+	maxConcurrent    atomic.Int64                                        // 0 = unlimited
+	maxConcExpires   atomic.Int64                                        // unix nano，缓存过期时间
+	cachedLimiterCfg atomic.Pointer[service.ImageGatewayRuntimeSettings] // 完整配置缓存
+
+	// 排队等待支持（mode="queue"）。
+	// limiter 是动态构建的信号量；limiterMu 保护 limiter 重建，按 max 变化时重新分配 channel。
+	// queued 是当前排队中（未拿到槽）的请求数，用于 MaxQueueSize 反压。
+	limiterMu  sync.Mutex
+	limiter    chan struct{} // capacity = current MaxConcurrent
+	limiterMax int64         // limiter 当前容量
+	queued     atomic.Int64
 }
 
-// NewOpenAIImagesV2Handler 装配新图片网关。
 func NewOpenAIImagesV2Handler(
 	accountRepo service.AccountRepository,
 	groupRepo service.GroupRepository,
@@ -59,6 +78,8 @@ func NewOpenAIImagesV2Handler(
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
 	settingService *service.SettingService,
+	concurrencyService *service.ConcurrencyService,
+	opsService *service.OpsService,
 ) *OpenAIImagesV2Handler {
 	probe := openaiimages.NewAccountProbe(accountRepo)
 
@@ -77,6 +98,8 @@ func NewOpenAIImagesV2Handler(
 		billingCacheService:   billingCacheService,
 		apiKeyService:         apiKeyService,
 		usageRecordWorkerPool: usageRecordWorkerPool,
+		concurrencyService:    concurrencyService,
+		opsService:            opsService,
 		pool:                  pool,
 		probe:                 probe,
 		settings:              settingService,
@@ -107,6 +130,20 @@ func NewOpenAIImagesV2Handler(
 		Pool: pool,
 		LookupAccount: func(ctx context.Context, pa openaiimages.PoolAccount) (openaiimages.AccountView, error) {
 			return h.lookupAccountView(ctx, pa)
+		},
+		AcquireSlot: func(ctx context.Context, accountID int64, maxConc int) (func(), error) {
+			if h.concurrencyService == nil {
+				return func() {}, nil
+			}
+			res, err := h.concurrencyService.AcquireImageAccountSlot(ctx, accountID, maxConc)
+			if err != nil {
+				// 槽位申请出错时降级（不阻断图片调度）
+				return func() {}, nil
+			}
+			if !res.Acquired || res.ReleaseFunc == nil {
+				return func() {}, nil
+			}
+			return res.ReleaseFunc, nil
 		},
 	})
 
@@ -203,6 +240,17 @@ func (h *OpenAIImagesV2Handler) run(c *gin.Context, req *openaiimages.ImagesRequ
 		zap.Bool("stream", req.Stream),
 	)
 	reqLog.Info("openaiimages.run_enter")
+
+	// 全局图片网关并发限流（防 OOM）。max=0 表示不限。
+	// mode="reject": 立即返回 429；mode="queue": 等待直至超时或队列满。
+	if cfg := h.currentLimiterConfig(c.Request.Context()); cfg != nil && cfg.MaxConcurrent > 0 {
+		release, err := h.acquireLimiter(c.Request.Context(), cfg, reqLog)
+		if err != nil {
+			writeOpenAIImageError(c, http.StatusTooManyRequests, "rate_limit_exceeded", err.Error())
+			return
+		}
+		defer release()
+	}
 
 	// Wire ops monitoring context (model/stream/body) so admin /ops/requests
 	// shows model, and so OpsErrorLoggerMiddleware can record full error rows.
@@ -483,6 +531,7 @@ func (h *OpenAIImagesV2Handler) lookupAccountView(ctx context.Context, pa openai
 		openaiimages.WithAPIKey(apiKey),
 		openaiimages.WithGroupLegacyDefault(groupLegacy),
 		openaiimages.WithDeviceSession(deviceID, sessionID, chatGPTAcctID, userAgent),
+		openaiimages.WithMaxConcurrency(acct.Concurrency),
 	)
 	return view, nil
 }
@@ -782,4 +831,137 @@ func extForMimePublic(mime string) string {
 	default:
 		return ".png"
 	}
+}
+
+// currentLimiterConfig 返回当前生效的图片网关运行时配置（带 5s 缓存）。
+// 返回 nil 或 MaxConcurrent=0 表示不限流。
+func (h *OpenAIImagesV2Handler) currentLimiterConfig(ctx context.Context) *service.ImageGatewayRuntimeSettings {
+	if h == nil || h.opsService == nil {
+		return nil
+	}
+	now := time.Now().UnixNano()
+	cached := h.cachedLimiterCfg.Load()
+	if exp := h.maxConcExpires.Load(); now < exp && cached != nil {
+		return cached
+	}
+	cfg, err := h.opsService.GetImageGatewayRuntimeSettings(ctx)
+	if err != nil || cfg == nil {
+		// 失败时沿用旧值（avoid 临时 DB 抖动放行所有请求）
+		return cached
+	}
+	h.cachedLimiterCfg.Store(cfg)
+	h.maxConcurrent.Store(int64(cfg.MaxConcurrent))
+	h.maxConcExpires.Store(now + int64(5*time.Second))
+	return cfg
+}
+
+// ensureLimiter 按 max 容量重建/复用 limiter channel。
+// 调用方必须已持有 limiterMu。
+func (h *OpenAIImagesV2Handler) ensureLimiterLocked(max int64) {
+	if h.limiter != nil && h.limiterMax == max {
+		return
+	}
+	// 容量变化时重建。在途请求会照常 release 到旧 channel（被 GC）；
+	// 新请求走新 channel。瞬时偏差可接受。
+	h.limiter = make(chan struct{}, max)
+	h.limiterMax = max
+}
+
+// acquireLimiter 按配置 mode 申请并发槽。reject 模式立即返回；queue 模式等待。
+// 返回 release closure（必须 defer 调用）；error 表示拒绝，调用方应回 429。
+// 闭包捕获本次拿到 token 的 channel，避免 limiter 容量变化时从错误的 channel 释放。
+func (h *OpenAIImagesV2Handler) acquireLimiter(ctx context.Context, cfg *service.ImageGatewayRuntimeSettings, reqLog *zap.Logger) (func(), error) {
+	max := int64(cfg.MaxConcurrent)
+	h.limiterMu.Lock()
+	h.ensureLimiterLocked(max)
+	limiter := h.limiter
+	h.limiterMu.Unlock()
+
+	releaseFn := func() {
+		h.inFlight.Add(-1)
+		select {
+		case <-limiter:
+		default:
+			// 防御性：不应发生，但避免 panic
+		}
+	}
+
+	// 快路径：立即拿到槽
+	select {
+	case limiter <- struct{}{}:
+		h.inFlight.Add(1)
+		return releaseFn, nil
+	default:
+	}
+
+	// 满了：根据 mode 决定 reject 或 queue
+	if cfg.Mode != service.ImageGatewayModeQueue {
+		reqLog.Warn("openaiimages.global_concurrency_exceeded",
+			zap.Int64("in_flight", h.inFlight.Load()),
+			zap.Int64("max", max),
+			zap.String("mode", "reject"),
+		)
+		return nil, fmt.Errorf("image gateway is at capacity (max %d in-flight), please retry later", max)
+	}
+
+	// queue 模式：检查队列上限
+	if cfg.MaxQueueSize > 0 {
+		if q := h.queued.Add(1); q > int64(cfg.MaxQueueSize) {
+			h.queued.Add(-1)
+			reqLog.Warn("openaiimages.queue_full",
+				zap.Int64("queued", q-1),
+				zap.Int("max_queue", cfg.MaxQueueSize),
+			)
+			return nil, fmt.Errorf("image gateway queue is full (max %d waiting), please retry later", cfg.MaxQueueSize)
+		}
+		defer h.queued.Add(-1)
+	} else {
+		h.queued.Add(1)
+		defer h.queued.Add(-1)
+	}
+
+	waitSec := cfg.MaxWaitSeconds
+	if waitSec <= 0 {
+		waitSec = 15
+	}
+	waitStart := time.Now()
+	timer := time.NewTimer(time.Duration(waitSec) * time.Second)
+	defer timer.Stop()
+
+	select {
+	case limiter <- struct{}{}:
+		h.inFlight.Add(1)
+		reqLog.Info("openaiimages.queue_acquired",
+			zap.Duration("waited", time.Since(waitStart)),
+		)
+		return releaseFn, nil
+	case <-timer.C:
+		reqLog.Warn("openaiimages.queue_wait_timeout",
+			zap.Int("max_wait_seconds", waitSec),
+			zap.Int64("max", max),
+		)
+		return nil, fmt.Errorf("image gateway queue wait timeout (%ds), please retry later", waitSec)
+	case <-ctx.Done():
+		reqLog.Info("openaiimages.queue_canceled",
+			zap.Duration("waited", time.Since(waitStart)),
+			zap.Error(ctx.Err()),
+		)
+		return nil, fmt.Errorf("request canceled while waiting for capacity")
+	}
+}
+
+// CurrentInFlight 返回当前正在执行的图片请求数（用于 ops snapshot 暴露给 UI）。
+func (h *OpenAIImagesV2Handler) CurrentInFlight() int64 {
+	if h == nil {
+		return 0
+	}
+	return h.inFlight.Load()
+}
+
+// CurrentQueued 返回当前排队等待的请求数（queue 模式下）。
+func (h *OpenAIImagesV2Handler) CurrentQueued() int64 {
+	if h == nil {
+		return 0
+	}
+	return h.queued.Load()
 }

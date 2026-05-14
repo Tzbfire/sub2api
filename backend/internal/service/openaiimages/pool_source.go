@@ -26,6 +26,7 @@ type PoolAccountView struct {
 	sessionID     string
 	chatGPTAcctID string
 	userAgent     string
+	maxConc       int
 }
 
 // PoolAccountViewOption 用于注入 PoolAccount 之外的字段（这些字段不在 PoolAccount 里，
@@ -47,6 +48,11 @@ func WithDeviceSession(deviceID, sessionID, chatGPTAcctID, userAgent string) Poo
 	}
 }
 
+// WithMaxConcurrency 注入账号的最大并发数（用于 ConcurrencyService 槽位申请）。
+func WithMaxConcurrency(n int) PoolAccountViewOption {
+	return func(v *PoolAccountView) { v.maxConc = n }
+}
+
 // NewPoolAccountView 构造一个 driver 视图。
 func NewPoolAccountView(pa PoolAccount, opts ...PoolAccountViewOption) *PoolAccountView {
 	v := &PoolAccountView{pa: pa}
@@ -65,6 +71,7 @@ func (v *PoolAccountView) SessionID() string        { return v.sessionID }
 func (v *PoolAccountView) ProxyURL() string         { return v.pa.ProxyURL }
 func (v *PoolAccountView) IsAPIKey() bool           { return v.apiKey != "" }
 func (v *PoolAccountView) APIKey() string           { return v.apiKey }
+func (v *PoolAccountView) MaxConcurrency() int      { return v.maxConc }
 
 // LegacyImagesEnabled 实现"账号覆盖分组"的三态逻辑：
 //
@@ -114,6 +121,12 @@ type PoolSourceDeps struct {
 	// 并构造完整 AccountView（包括 api_key / device_id / session_id 等 PoolAccount
 	// 不带的字段）。返回的 view 必须与 PoolAccount.ID() 一致。
 	LookupAccount func(ctx context.Context, pa PoolAccount) (AccountView, error)
+
+	// AcquireSlot 可选：lookup 成功后立即占用账号级并发槽位（接入 ConcurrencyService），
+	// 这样图片请求会同步出现在 OpsConcurrencyCard 的账号/分组/平台聚合里。
+	// 返回的 release 会被串接到 Select() 返回的 release 函数末尾。
+	// 失败或槽位满时应返回 noop release（不阻塞图片调度）；返回 error 表示硬错误。
+	AcquireSlot func(ctx context.Context, accountID int64, maxConcurrency int) (release func(), err error)
 }
 
 // PoolBackedSource 把 ImagePool 适配为 dispatch.AccountSource。
@@ -142,7 +155,21 @@ func (s *PoolBackedSource) Select(ctx context.Context, filter PoolFilter) (Accou
 		release()
 		return nil, nil, errors.New("openaiimages: lookup returned nil view")
 	}
-	return view, release, nil
+
+	// 接入账号级并发槽位（用于 OpsConcurrencyCard 实时观测）。
+	// 失败或满时降级为 noop，不阻断图片调度。
+	slotRelease := func() {}
+	if s.deps.AcquireSlot != nil {
+		if rel, err := s.deps.AcquireSlot(ctx, view.ID(), view.MaxConcurrency()); err == nil && rel != nil {
+			slotRelease = rel
+		}
+	}
+
+	combined := func() {
+		slotRelease()
+		release()
+	}
+	return view, combined, nil
 }
 
 func (s *PoolBackedSource) OnSuccess(ctx context.Context, account AccountView, result *ImageResult) error {

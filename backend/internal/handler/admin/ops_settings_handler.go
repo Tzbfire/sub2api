@@ -271,3 +271,46 @@ func (h *OpsHandler) UpdateMetricThresholds(c *gin.Context) {
 	}
 	response.Success(c, updated)
 }
+
+// GetImageGatewayRuntimeSettings returns image gateway runtime settings (DB-backed).
+// GET /api/v1/admin/ops/runtime/image-gateway
+func (h *OpsHandler) GetImageGatewayRuntimeSettings(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	cfg, err := h.opsService.GetImageGatewayRuntimeSettings(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "Failed to get image gateway settings")
+		return
+	}
+	response.Success(c, cfg)
+}
+
+// UpdateImageGatewayRuntimeSettings updates image gateway runtime settings (DB-backed).
+// PUT /api/v1/admin/ops/runtime/image-gateway
+func (h *OpsHandler) UpdateImageGatewayRuntimeSettings(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	var req service.ImageGatewayRuntimeSettings
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request body")
+		return
+	}
+	updated, err := h.opsService.UpdateImageGatewayRuntimeSettings(c.Request.Context(), &req)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	response.Success(c, updated)
+}

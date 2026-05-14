@@ -25,6 +25,9 @@ const (
 	// 并发槽位键前缀（有序集合）
 	// 格式: concurrency:account:{accountID}
 	accountSlotKeyPrefix = "concurrency:account:"
+	// 图片网关独立的账号槽位前缀（与 chat/responses 槽位隔离，避免互挤额度）
+	// 格式: concurrency:image_account:{accountID}
+	imageAccountSlotKeyPrefix = "concurrency:image_account:"
 	// 格式: concurrency:user:{userID}
 	userSlotKeyPrefix = "concurrency:user:"
 	// 等待队列计数器格式: concurrency:wait:{userID}
@@ -218,6 +221,10 @@ func accountSlotKey(accountID int64) string {
 	return fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
 }
 
+func imageAccountSlotKey(accountID int64) string {
+	return fmt.Sprintf("%s%d", imageAccountSlotKeyPrefix, accountID)
+}
+
 func userSlotKey(userID int64) string {
 	return fmt.Sprintf("%s%d", userSlotKeyPrefix, userID)
 }
@@ -232,8 +239,8 @@ func accountWaitKey(accountID int64) string {
 
 // Account slot operations
 
-func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
-	key := accountSlotKey(accountID)
+// acquireSlotByKey 在指定 key 上申请并发槽位（chat / image 共享实现，差异仅在 key 前缀）。
+func (c *concurrencyCache) acquireSlotByKey(ctx context.Context, key string, maxConcurrency int, requestID string) (bool, error) {
 	// 时间戳在 Lua 脚本内使用 Redis TIME 命令获取，确保多实例时钟一致
 	result, err := acquireScript.Run(ctx, c.rdb, []string{key}, maxConcurrency, c.slotTTLSeconds, requestID).Int()
 	if err != nil {
@@ -242,9 +249,22 @@ func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int
 	return result == 1, nil
 }
 
+func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+	return c.acquireSlotByKey(ctx, accountSlotKey(accountID), maxConcurrency, requestID)
+}
+
 func (c *concurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int64, requestID string) error {
-	key := accountSlotKey(accountID)
-	return c.rdb.ZRem(ctx, key, requestID).Err()
+	return c.rdb.ZRem(ctx, accountSlotKey(accountID), requestID).Err()
+}
+
+// AcquireImageAccountSlot 在独立 image 槽位 key 上申请一个槽位。
+// 与 AcquireAccountSlot 完全隔离：图片请求不会消耗 chat/responses 配额。
+func (c *concurrencyCache) AcquireImageAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+	return c.acquireSlotByKey(ctx, imageAccountSlotKey(accountID), maxConcurrency, requestID)
+}
+
+func (c *concurrencyCache) ReleaseImageAccountSlot(ctx context.Context, accountID int64, requestID string) error {
+	return c.rdb.ZRem(ctx, imageAccountSlotKey(accountID), requestID).Err()
 }
 
 func (c *concurrencyCache) GetAccountConcurrency(ctx context.Context, accountID int64) (int, error) {
@@ -386,17 +406,21 @@ func (c *concurrencyCache) GetAccountsLoadBatch(ctx context.Context, accounts []
 		id             int64
 		maxConcurrency int
 		zcardCmd       *redis.IntCmd
+		imageZcardCmd  *redis.IntCmd
 		getCmd         *redis.StringCmd
 	}
 	cmds := make([]accountCmds, 0, len(accounts))
 	for _, acc := range accounts {
 		slotKey := accountSlotKeyPrefix + strconv.FormatInt(acc.ID, 10)
+		imageSlotKey := imageAccountSlotKeyPrefix + strconv.FormatInt(acc.ID, 10)
 		waitKey := accountWaitKeyPrefix + strconv.FormatInt(acc.ID, 10)
 		pipe.ZRemRangeByScore(ctx, slotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
+		pipe.ZRemRangeByScore(ctx, imageSlotKey, "-inf", strconv.FormatInt(cutoffTime, 10))
 		ac := accountCmds{
 			id:             acc.ID,
 			maxConcurrency: acc.MaxConcurrency,
 			zcardCmd:       pipe.ZCard(ctx, slotKey),
+			imageZcardCmd:  pipe.ZCard(ctx, imageSlotKey),
 			getCmd:         pipe.Get(ctx, waitKey),
 		}
 		cmds = append(cmds, ac)
@@ -409,6 +433,7 @@ func (c *concurrencyCache) GetAccountsLoadBatch(ctx context.Context, accounts []
 	loadMap := make(map[int64]*service.AccountLoadInfo, len(accounts))
 	for _, ac := range cmds {
 		currentConcurrency := int(ac.zcardCmd.Val())
+		imageConcurrency := int(ac.imageZcardCmd.Val())
 		waitingCount := 0
 		if v, err := ac.getCmd.Int(); err == nil {
 			waitingCount = v
@@ -420,6 +445,7 @@ func (c *concurrencyCache) GetAccountsLoadBatch(ctx context.Context, accounts []
 		loadMap[ac.id] = &service.AccountLoadInfo{
 			AccountID:          ac.id,
 			CurrentConcurrency: currentConcurrency,
+			ImageConcurrency:   imageConcurrency,
 			WaitingCount:       waitingCount,
 			LoadRate:           loadRate,
 		}

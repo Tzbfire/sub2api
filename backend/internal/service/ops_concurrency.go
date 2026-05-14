@@ -148,10 +148,17 @@ func (s *OpsService) GetConcurrencyStats(
 
 		load := loadMap[acc.ID]
 		currentInUse := int64(0)
+		imageInUse := int64(0)
 		waiting := int64(0)
 		if load != nil {
 			currentInUse = int64(load.CurrentConcurrency)
+			imageInUse = int64(load.ImageConcurrency)
 			waiting = int64(load.WaitingCount)
+		}
+		imageCooldown := isImageCooldown(acc.Extra)
+		var cooldownInc int64
+		if imageCooldown {
+			cooldownInc = 1
 		}
 
 		// Account-level view picks one display group (the first group).
@@ -173,6 +180,8 @@ func (s *OpsService) GetConcurrencyStats(
 				GroupID:        displayGroupID,
 				GroupName:      displayGroupName,
 				CurrentInUse:   currentInUse,
+				ImageInUse:     imageInUse,
+				ImageCooldown:  imageCooldown,
 				MaxCapacity:    int64(acc.Concurrency),
 				WaitingInQueue: waiting,
 			}
@@ -192,6 +201,8 @@ func (s *OpsService) GetConcurrencyStats(
 			p := platform[acc.Platform]
 			p.MaxCapacity += int64(acc.Concurrency)
 			p.CurrentInUse += currentInUse
+			p.ImageInUse += imageInUse
+			p.ImageCooldownCount += cooldownInc
 			p.WaitingInQueue += waiting
 		}
 
@@ -215,6 +226,8 @@ func (s *OpsService) GetConcurrencyStats(
 			}
 			g.MaxCapacity += int64(acc.Concurrency)
 			g.CurrentInUse += currentInUse
+			g.ImageInUse += imageInUse
+			g.ImageCooldownCount += cooldownInc
 			g.WaitingInQueue += waiting
 		} else {
 			for _, grp := range acc.Groups {
@@ -238,6 +251,8 @@ func (s *OpsService) GetConcurrencyStats(
 				}
 				g.MaxCapacity += int64(acc.Concurrency)
 				g.CurrentInUse += currentInUse
+				g.ImageInUse += imageInUse
+				g.ImageCooldownCount += cooldownInc
 				g.WaitingInQueue += waiting
 			}
 		}
@@ -394,4 +409,21 @@ func (s *OpsService) GetUserConcurrencyStats(ctx context.Context) (map[int64]*Us
 	}
 
 	return result, &collectedAt, nil
+}
+
+// isImageCooldown returns true when the account's image gateway is still in
+// cooldown (rate-limited or quota exhausted) according to extra.image_cooldown_until.
+func isImageCooldown(extra map[string]any) bool {
+	if extra == nil {
+		return false
+	}
+	raw, _ := extra["image_cooldown_until"].(string)
+	if raw == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return false
+	}
+	return t.After(time.Now())
 }

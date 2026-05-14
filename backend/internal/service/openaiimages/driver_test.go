@@ -29,6 +29,7 @@ func (a *stubAccount) SessionID() string                    { return "" }
 func (a *stubAccount) ProxyURL() string                     { return a.proxy }
 func (a *stubAccount) IsAPIKey() bool                       { return a.apiKey != "" }
 func (a *stubAccount) APIKey() string                       { return a.apiKey }
+func (a *stubAccount) MaxConcurrency() int                  { return 0 }
 func (a *stubAccount) LegacyImagesEnabled() bool            { return false }
 func (a *stubAccount) QuotaSnapshot() *AccountQuotaSnapshot { return nil }
 
@@ -459,6 +460,7 @@ func (a *stubOAuthAccount) SessionID() string                    { return a.sess
 func (a *stubOAuthAccount) ProxyURL() string                     { return "" }
 func (a *stubOAuthAccount) IsAPIKey() bool                       { return false }
 func (a *stubOAuthAccount) APIKey() string                       { return "" }
+func (a *stubOAuthAccount) MaxConcurrency() int                  { return 0 }
 func (a *stubOAuthAccount) LegacyImagesEnabled() bool            { return false }
 func (a *stubOAuthAccount) QuotaSnapshot() *AccountQuotaSnapshot { return nil }
 

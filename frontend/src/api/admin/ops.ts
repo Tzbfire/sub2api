@@ -343,6 +343,8 @@ export interface OpsJobHeartbeat {
 export interface PlatformConcurrencyInfo {
   platform: string
   current_in_use: number
+  image_in_use?: number
+  image_cooldown_count?: number
   max_capacity: number
   load_percentage: number
   waiting_in_queue: number
@@ -353,6 +355,8 @@ export interface GroupConcurrencyInfo {
   group_name: string
   platform: string
   current_in_use: number
+  image_in_use?: number
+  image_cooldown_count?: number
   max_capacity: number
   load_percentage: number
   waiting_in_queue: number
@@ -365,6 +369,8 @@ export interface AccountConcurrencyInfo {
   group_id: number
   group_name: string
   current_in_use: number
+  image_in_use?: number
+  image_cooldown?: boolean
   max_capacity: number
   load_percentage: number
   waiting_in_queue: number
@@ -1328,6 +1334,26 @@ export async function resetRuntimeLogConfig(): Promise<OpsRuntimeLogConfig> {
   return data
 }
 
+// 图片网关运行时设置（DB-backed，按实例独立计数防 OOM）
+export interface ImageGatewayRuntimeSettings {
+  max_concurrent: number // 0 = unlimited（每实例正在执行的图片请求上限）
+  mode: 'reject' | 'queue' // reject=超限立即429；queue=排队等待
+  max_queue_size: number // queue 模式：最大排队数（防 OOM 反压）
+  max_wait_seconds: number // queue 模式：单个请求最长等待秒数
+}
+
+export async function getImageGatewayRuntimeSettings(): Promise<ImageGatewayRuntimeSettings> {
+  const { data } = await apiClient.get<ImageGatewayRuntimeSettings>('/admin/ops/runtime/image-gateway')
+  return data
+}
+
+export async function updateImageGatewayRuntimeSettings(
+  config: ImageGatewayRuntimeSettings
+): Promise<ImageGatewayRuntimeSettings> {
+  const { data } = await apiClient.put<ImageGatewayRuntimeSettings>('/admin/ops/runtime/image-gateway', config)
+  return data
+}
+
 export async function listSystemLogs(params: OpsSystemLogQuery): Promise<OpsSystemLogListResponse> {
   const { data } = await apiClient.get<OpsSystemLogListResponse>('/admin/ops/system-logs', { params })
   return data
@@ -1414,6 +1440,8 @@ export const opsAPI = {
   getRuntimeLogConfig,
   updateRuntimeLogConfig,
   resetRuntimeLogConfig,
+  getImageGatewayRuntimeSettings,
+  updateImageGatewayRuntimeSettings,
   getAdvancedSettings,
   updateAdvancedSettings,
   getMetricThresholds,

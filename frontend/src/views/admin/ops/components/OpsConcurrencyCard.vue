@@ -60,6 +60,8 @@ interface SummaryRow {
   // 并发统计
   total_concurrency: number
   used_concurrency: number
+  image_used: number
+  image_cooldown_count: number
   waiting_in_queue: number
   // 计算字段
   availability_percentage: number
@@ -74,6 +76,8 @@ interface AccountRow {
   group_name: string
   // 并发
   current_in_use: number
+  image_in_use: number
+  image_cooldown: boolean
   max_capacity: number
   waiting_in_queue: number
   load_percentage: number
@@ -125,6 +129,8 @@ const platformRows = computed((): SummaryRow[] => {
       error_accounts: safeNumber(avail.error_count),
       total_concurrency: totalConcurrency,
       used_concurrency: usedConcurrency,
+      image_used: safeNumber(conc.image_in_use),
+      image_cooldown_count: safeNumber(conc.image_cooldown_count),
       waiting_in_queue: safeNumber(conc.waiting_in_queue),
       availability_percentage: totalAccounts > 0 ? Math.round((availableAccounts / totalAccounts) * 100) : 0,
       concurrency_percentage: totalConcurrency > 0 ? Math.round((usedConcurrency / totalConcurrency) * 100) : 0
@@ -165,6 +171,8 @@ const groupRows = computed((): SummaryRow[] => {
         error_accounts: safeNumber(avail.error_count),
         total_concurrency: totalConcurrency,
         used_concurrency: usedConcurrency,
+        image_used: safeNumber(conc.image_in_use),
+        image_cooldown_count: safeNumber(conc.image_cooldown_count),
         waiting_in_queue: safeNumber(conc.waiting_in_queue),
         availability_percentage: totalAccounts > 0 ? Math.round((availableAccounts / totalAccounts) * 100) : 0,
         concurrency_percentage: totalConcurrency > 0 ? Math.round((usedConcurrency / totalConcurrency) * 100) : 0
@@ -200,6 +208,8 @@ const accountRows = computed((): AccountRow[] => {
         platform: String(conc.platform || avail.platform || ''),
         group_name: String(conc.group_name || avail.group_name || ''),
         current_in_use: safeNumber(conc.current_in_use),
+        image_in_use: safeNumber(conc.image_in_use),
+        image_cooldown: Boolean(conc.image_cooldown),
         max_capacity: safeNumber(conc.max_capacity),
         waiting_in_queue: safeNumber(conc.waiting_in_queue),
         load_percentage: safeNumber(conc.load_percentage),
@@ -317,6 +327,14 @@ function getLoadTextClass(loadPct: number): string {
   if (loadPct >= 70) return 'text-orange-600 dark:text-orange-400'
   if (loadPct >= 50) return 'text-yellow-600 dark:text-yellow-400'
   return 'text-green-600 dark:text-green-400'
+}
+
+// 图片网关独立槽位徽章颜色：根据 used/max 比例切换 indigo→amber→red
+function getImageBadgeClass(used: number, max: number): string {
+  const pct = max > 0 ? (used / max) * 100 : 0
+  if (pct >= 90) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+  if (pct >= 60) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+  return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
 }
 
 function formatDuration(seconds: number): string {
@@ -456,6 +474,21 @@ watch(
             </div>
             <div class="flex shrink-0 items-center gap-2 text-[10px]">
               <span class="font-mono font-bold text-gray-900 dark:text-white"> {{ row.used_concurrency }}/{{ row.total_concurrency }} </span>
+              <!-- 图片网关独立槽位（与 chat/responses 配额隔离） -->
+              <span
+                :class="['inline-flex items-center rounded px-1.5 py-0.5 font-semibold', getImageBadgeClass(row.image_used, row.total_concurrency)]"
+                title="图片网关独立槽位（与 chat/responses 配额隔离）"
+              >
+                IMG {{ row.image_used }}/{{ row.total_concurrency }}
+              </span>
+              <!-- 图片冷却中账号数 -->
+              <span
+                v-if="row.image_cooldown_count > 0"
+                class="inline-flex items-center rounded bg-cyan-100 px-1.5 py-0.5 font-semibold text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400"
+                :title="`${row.image_cooldown_count} 个账号图片网关冷却中（被限流或额度耗尽）`"
+              >
+                ❄ {{ row.image_cooldown_count }}
+              </span>
               <span :class="['font-bold', getLoadTextClass(row.concurrency_percentage)]"> {{ row.concurrency_percentage }}% </span>
             </div>
           </div>
@@ -531,6 +564,21 @@ watch(
             <div class="flex shrink-0 items-center gap-2">
               <!-- 并发使用 -->
               <span class="font-mono text-[11px] font-bold text-gray-900 dark:text-white"> {{ row.current_in_use }}/{{ row.max_capacity }} </span>
+              <!-- 图片网关独立槽位（隔离于 chat/responses） -->
+              <span
+                :class="['inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold', getImageBadgeClass(row.image_in_use, row.max_capacity)]"
+                title="图片网关独立槽位（与 chat/responses 配额隔离）"
+              >
+                IMG {{ row.image_in_use }}/{{ row.max_capacity }}
+              </span>
+              <!-- 图片冷却中（被限流或额度耗尽） -->
+              <span
+                v-if="row.image_cooldown"
+                class="inline-flex items-center rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400"
+                title="图片网关冷却中（被限流或额度耗尽）"
+              >
+                ❄ 冷却
+              </span>
               <!-- 状态徽章 -->
               <span
                 v-if="row.is_available"

@@ -104,6 +104,12 @@ func (f *fakeConcurrencyCache) AcquireAccountSlot(context.Context, int64, int, s
 	return true, nil
 }
 func (f *fakeConcurrencyCache) ReleaseAccountSlot(context.Context, int64, string) error { return nil }
+func (f *fakeConcurrencyCache) AcquireImageAccountSlot(context.Context, int64, int, string) (bool, error) {
+	return true, nil
+}
+func (f *fakeConcurrencyCache) ReleaseImageAccountSlot(context.Context, int64, string) error {
+	return nil
+}
 func (f *fakeConcurrencyCache) GetAccountConcurrency(context.Context, int64) (int, error) {
 	return 0, nil
 }

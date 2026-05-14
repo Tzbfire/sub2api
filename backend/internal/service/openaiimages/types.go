@@ -141,6 +141,8 @@ type AccountView interface {
 	ProxyURL() string
 	IsAPIKey() bool
 	APIKey() string
+	// MaxConcurrency 返回账号的最大并发限制（0 表示不限），用于接入账号级并发槽位。
+	MaxConcurrency() int
 	// LegacyImagesEnabled 是 group + account toggle 解析后的最终开关
 	// （account.extra.openai_oauth_legacy_images 覆盖 group.openai_legacy_images_default）。
 	LegacyImagesEnabled() bool

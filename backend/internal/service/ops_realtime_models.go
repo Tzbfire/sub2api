@@ -4,24 +4,28 @@ import "time"
 
 // PlatformConcurrencyInfo aggregates concurrency usage by platform.
 type PlatformConcurrencyInfo struct {
-	Platform       string  `json:"platform"`
-	CurrentInUse   int64   `json:"current_in_use"`
-	MaxCapacity    int64   `json:"max_capacity"`
-	LoadPercentage float64 `json:"load_percentage"`
-	WaitingInQueue int64   `json:"waiting_in_queue"`
+	Platform           string  `json:"platform"`
+	CurrentInUse       int64   `json:"current_in_use"`
+	ImageInUse         int64   `json:"image_in_use"`
+	ImageCooldownCount int64   `json:"image_cooldown_count"`
+	MaxCapacity        int64   `json:"max_capacity"`
+	LoadPercentage     float64 `json:"load_percentage"`
+	WaitingInQueue     int64   `json:"waiting_in_queue"`
 }
 
 // GroupConcurrencyInfo aggregates concurrency usage by group.
 //
 // Note: one account can belong to multiple groups; group totals are therefore not additive across groups.
 type GroupConcurrencyInfo struct {
-	GroupID        int64   `json:"group_id"`
-	GroupName      string  `json:"group_name"`
-	Platform       string  `json:"platform"`
-	CurrentInUse   int64   `json:"current_in_use"`
-	MaxCapacity    int64   `json:"max_capacity"`
-	LoadPercentage float64 `json:"load_percentage"`
-	WaitingInQueue int64   `json:"waiting_in_queue"`
+	GroupID            int64   `json:"group_id"`
+	GroupName          string  `json:"group_name"`
+	Platform           string  `json:"platform"`
+	CurrentInUse       int64   `json:"current_in_use"`
+	ImageInUse         int64   `json:"image_in_use"`
+	ImageCooldownCount int64   `json:"image_cooldown_count"`
+	MaxCapacity        int64   `json:"max_capacity"`
+	LoadPercentage     float64 `json:"load_percentage"`
+	WaitingInQueue     int64   `json:"waiting_in_queue"`
 }
 
 // AccountConcurrencyInfo represents real-time concurrency usage for a single account.
@@ -32,6 +36,8 @@ type AccountConcurrencyInfo struct {
 	GroupID        int64   `json:"group_id"`
 	GroupName      string  `json:"group_name"`
 	CurrentInUse   int64   `json:"current_in_use"`
+	ImageInUse     int64   `json:"image_in_use"`
+	ImageCooldown  bool    `json:"image_cooldown"`
 	MaxCapacity    int64   `json:"max_capacity"`
 	LoadPercentage float64 `json:"load_percentage"`
 	WaitingInQueue int64   `json:"waiting_in_queue"`

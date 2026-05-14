@@ -135,6 +135,8 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 			runtime.GET("/logging", h.Admin.Ops.GetRuntimeLogConfig)
 			runtime.PUT("/logging", h.Admin.Ops.UpdateRuntimeLogConfig)
 			runtime.POST("/logging/reset", h.Admin.Ops.ResetRuntimeLogConfig)
+			runtime.GET("/image-gateway", h.Admin.Ops.GetImageGatewayRuntimeSettings)
+			runtime.PUT("/image-gateway", h.Admin.Ops.UpdateImageGatewayRuntimeSettings)
 		}
 
 		// Advanced settings (DB-backed)

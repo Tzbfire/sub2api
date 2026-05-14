@@ -7,6 +7,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import type { OpsAlertRuntimeSettings, EmailNotificationConfig, AlertSeverity, OpsAdvancedSettings, OpsMetricThresholds } from '../types'
+import type { ImageGatewayRuntimeSettings } from '@/api/admin/ops'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -29,6 +30,8 @@ const runtimeSettings = ref<OpsAlertRuntimeSettings | null>(null)
 const emailConfig = ref<EmailNotificationConfig | null>(null)
 // 高级设置
 const advancedSettings = ref<OpsAdvancedSettings | null>(null)
+// 图片网关运行时（每实例并发上限）
+const imageGatewaySettings = ref<ImageGatewayRuntimeSettings | null>(null)
 // 指标阈值配置
 const metricThresholds = ref<OpsMetricThresholds>({
   sla_percent_min: 99.5,
@@ -41,15 +44,20 @@ const metricThresholds = ref<OpsMetricThresholds>({
 async function loadAllSettings() {
   loading.value = true
   try {
-    const [runtime, email, advanced, thresholds] = await Promise.all([
+    const [runtime, email, advanced, thresholds, imageGw] = await Promise.all([
       opsAPI.getAlertRuntimeSettings(),
       opsAPI.getEmailNotificationConfig(),
       opsAPI.getAdvancedSettings(),
-      opsAPI.getMetricThresholds()
+      opsAPI.getMetricThresholds(),
+      opsAPI.getImageGatewayRuntimeSettings().catch((err) => {
+        console.error('[OpsSettingsDialog] Failed to load image gateway settings', err)
+        return { max_concurrent: 0, mode: 'reject', max_queue_size: 20, max_wait_seconds: 15 } as ImageGatewayRuntimeSettings
+      })
     ])
     runtimeSettings.value = runtime
     emailConfig.value = email
     advancedSettings.value = advanced
+    imageGatewaySettings.value = imageGw
     // 如果后端返回了阈值，使用后端的值；否则保持默认值
     if (thresholds && Object.keys(thresholds).length > 0) {
         metricThresholds.value = {
@@ -186,7 +194,8 @@ async function saveAllSettings() {
       runtimeSettings.value ? opsAPI.updateAlertRuntimeSettings(runtimeSettings.value) : Promise.resolve(),
       emailConfig.value ? opsAPI.updateEmailNotificationConfig(emailConfig.value) : Promise.resolve(),
       advancedSettings.value ? opsAPI.updateAdvancedSettings(advancedSettings.value) : Promise.resolve(),
-      opsAPI.updateMetricThresholds(metricThresholds.value)
+      opsAPI.updateMetricThresholds(metricThresholds.value),
+      imageGatewaySettings.value ? opsAPI.updateImageGatewayRuntimeSettings(imageGatewaySettings.value) : Promise.resolve()
     ])
     appStore.showSuccess(t('admin.ops.settings.saveSuccess'))
     emit('saved')
@@ -206,7 +215,7 @@ async function saveAllSettings() {
       {{ t('common.loading') }}
     </div>
 
-    <div v-else-if="runtimeSettings && emailConfig && advancedSettings" class="space-y-6">
+    <div v-else-if="runtimeSettings && emailConfig && advancedSettings && imageGatewaySettings" class="space-y-6">
       <!-- 验证错误 -->
       <div v-if="!validation.valid" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
         <div class="font-bold">{{ t('admin.ops.settings.validation.title') }}</div>
@@ -395,6 +404,61 @@ async function saveAllSettings() {
               class="input"
             />
             <p class="mt-1 text-xs text-gray-500">{{ t('admin.ops.settings.upstreamErrorRateMaxPercentHint') }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 图片网关并发上限 -->
+      <div class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-700/50">
+        <div class="mb-2">
+          <h4 class="text-sm font-semibold text-gray-900 dark:text-white">图片网关并发上限</h4>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            每实例同时进行的图片请求数上限（0 = 不限）。多副本部署时，扩 Pod 自动按比例扩容。建议：2G 内存设 4-6；4G 设 8-12。
+          </p>
+        </div>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label class="input-label">max_concurrent（每实例并发上限）</label>
+            <input
+              v-model.number="imageGatewaySettings.max_concurrent"
+              type="number"
+              min="0"
+              max="1024"
+              class="input"
+            />
+            <p class="mt-1 text-xs text-gray-500">0 = 不限（不推荐，OOM 风险）</p>
+          </div>
+          <div>
+            <label class="input-label">超限策略</label>
+            <select v-model="imageGatewaySettings.mode" class="input">
+              <option value="reject">reject（立即返回 429）</option>
+              <option value="queue">queue（排队等待）</option>
+            </select>
+            <p class="mt-1 text-xs text-gray-500">
+              reject 简单可靠；queue 平滑突发但占用内存
+            </p>
+          </div>
+          <div v-if="imageGatewaySettings.mode === 'queue'">
+            <label class="input-label">max_queue_size（队列上限）</label>
+            <input
+              v-model.number="imageGatewaySettings.max_queue_size"
+              type="number"
+              min="0"
+              max="10000"
+              class="input"
+            />
+            <p class="mt-1 text-xs text-gray-500">超过则 429。推荐 20</p>
+          </div>
+          <div v-if="imageGatewaySettings.mode === 'queue'">
+            <label class="input-label">max_wait_seconds（最长等待秒）</label>
+            <input
+              v-model.number="imageGatewaySettings.max_wait_seconds"
+              type="number"
+              min="1"
+              max="600"
+              class="input"
+            />
+            <p class="mt-1 text-xs text-gray-500">超时则 429。推荐 15</p>
           </div>
         </div>
       </div>

@@ -29,6 +29,14 @@ func (m *concurrencyCacheMock) ReleaseAccountSlot(ctx context.Context, accountID
 	return nil
 }
 
+func (m *concurrencyCacheMock) AcquireImageAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+	return true, nil
+}
+
+func (m *concurrencyCacheMock) ReleaseImageAccountSlot(ctx context.Context, accountID int64, requestID string) error {
+	return nil
+}
+
 func (m *concurrencyCacheMock) GetAccountConcurrency(ctx context.Context, accountID int64) (int, error) {
 	return 0, nil
 }

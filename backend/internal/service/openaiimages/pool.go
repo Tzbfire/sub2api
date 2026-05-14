@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -168,7 +169,11 @@ func (p *ImagePool) lease(accountID int64, now time.Time) ReleaseFn {
 	}
 	p.leased[accountID] = now.Add(2 * time.Minute)
 	p.mu.Unlock()
+	var released atomic.Bool
 	return func() {
+		if !released.CompareAndSwap(false, true) {
+			return
+		}
 		p.mu.Lock()
 		delete(p.leased, accountID)
 		p.mu.Unlock()

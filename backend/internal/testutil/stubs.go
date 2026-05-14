@@ -27,6 +27,12 @@ func (c StubConcurrencyCache) AcquireAccountSlot(_ context.Context, _ int64, _ i
 func (c StubConcurrencyCache) ReleaseAccountSlot(_ context.Context, _ int64, _ string) error {
 	return nil
 }
+func (c StubConcurrencyCache) AcquireImageAccountSlot(_ context.Context, _ int64, _ int, _ string) (bool, error) {
+	return true, nil
+}
+func (c StubConcurrencyCache) ReleaseImageAccountSlot(_ context.Context, _ int64, _ string) error {
+	return nil
+}
 func (c StubConcurrencyCache) GetAccountConcurrency(_ context.Context, _ int64) (int, error) {
 	return 0, nil
 }

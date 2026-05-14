@@ -45,6 +45,14 @@ func (s *helperConcurrencyCacheStub) ReleaseAccountSlot(ctx context.Context, acc
 	return nil
 }
 
+func (s *helperConcurrencyCacheStub) AcquireImageAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
+	return true, nil
+}
+
+func (s *helperConcurrencyCacheStub) ReleaseImageAccountSlot(ctx context.Context, accountID int64, requestID string) error {
+	return nil
+}
+
 func (s *helperConcurrencyCacheStub) GetAccountConcurrency(ctx context.Context, accountID int64) (int, error) {
 	return 0, nil
 }

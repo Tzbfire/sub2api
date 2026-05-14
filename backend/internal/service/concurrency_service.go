@@ -22,6 +22,11 @@ type ConcurrencyCache interface {
 	GetAccountConcurrency(ctx context.Context, accountID int64) (int, error)
 	GetAccountConcurrencyBatch(ctx context.Context, accountIDs []int64) (map[int64]int, error)
 
+	// 图片网关独立账号槽位管理（与 chat/responses 槽位完全隔离）
+	// 键格式: concurrency:image_account:{accountID}
+	AcquireImageAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error)
+	ReleaseImageAccountSlot(ctx context.Context, accountID int64, requestID string) error
+
 	// 账号等待队列（账号级）
 	IncrementAccountWaitCount(ctx context.Context, accountID int64, maxWait int) (bool, error)
 	DecrementAccountWaitCount(ctx context.Context, accountID int64) error
@@ -112,6 +117,7 @@ type UserWithConcurrency struct {
 type AccountLoadInfo struct {
 	AccountID          int64
 	CurrentConcurrency int
+	ImageConcurrency   int // 图片网关独立槽位计数（隔离于 chat/responses）
 	WaitingCount       int
 	LoadRate           int // 0-100+ (percent)
 }
@@ -123,43 +129,53 @@ type UserLoadInfo struct {
 	LoadRate           int // 0-100+ (percent)
 }
 
+// acquireSlotWith 是 chat / image 账号槽位申请的共享实现。
+// label 仅用于日志区分。
+func (s *ConcurrencyService) acquireSlotWith(
+	ctx context.Context,
+	accountID int64,
+	maxConcurrency int,
+	label string,
+	acquireFn func(ctx context.Context, accountID int64, max int, reqID string) (bool, error),
+	releaseFn func(ctx context.Context, accountID int64, reqID string) error,
+) (*AcquireResult, error) {
+	if maxConcurrency <= 0 {
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
+	}
+	requestID := generateRequestID()
+	acquired, err := acquireFn(ctx, accountID, maxConcurrency, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return &AcquireResult{Acquired: false, ReleaseFunc: nil}, nil
+	}
+	return &AcquireResult{
+		Acquired: true,
+		ReleaseFunc: func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := releaseFn(bgCtx, accountID, requestID); err != nil {
+				logger.LegacyPrintf("service.concurrency", "Warning: failed to release %s slot for %d (req=%s): %v", label, accountID, requestID, err)
+			}
+		},
+	}, nil
+}
+
 // AcquireAccountSlot attempts to acquire a concurrency slot for an account.
 // If the account is at max concurrency, it waits until a slot is available or timeout.
 // Returns a release function that MUST be called when the request completes.
 func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
-	// If maxConcurrency is 0 or negative, no limit
-	if maxConcurrency <= 0 {
-		return &AcquireResult{
-			Acquired:    true,
-			ReleaseFunc: func() {}, // no-op
-		}, nil
-	}
+	return s.acquireSlotWith(ctx, accountID, maxConcurrency, "account",
+		s.cache.AcquireAccountSlot, s.cache.ReleaseAccountSlot)
+}
 
-	// Generate unique request ID for this slot
-	requestID := generateRequestID()
-
-	acquired, err := s.cache.AcquireAccountSlot(ctx, accountID, maxConcurrency, requestID)
-	if err != nil {
-		return nil, err
-	}
-
-	if acquired {
-		return &AcquireResult{
-			Acquired: true,
-			ReleaseFunc: func() {
-				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := s.cache.ReleaseAccountSlot(bgCtx, accountID, requestID); err != nil {
-					logger.LegacyPrintf("service.concurrency", "Warning: failed to release account slot for %d (req=%s): %v", accountID, requestID, err)
-				}
-			},
-		}, nil
-	}
-
-	return &AcquireResult{
-		Acquired:    false,
-		ReleaseFunc: nil,
-	}, nil
+// AcquireImageAccountSlot attempts to acquire a slot on the dedicated image-gateway
+// counter for an account. This is fully isolated from AcquireAccountSlot, so image
+// requests do not consume chat/responses concurrency budget.
+func (s *ConcurrencyService) AcquireImageAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
+	return s.acquireSlotWith(ctx, accountID, maxConcurrency, "image account",
+		s.cache.AcquireImageAccountSlot, s.cache.ReleaseImageAccountSlot)
 }
 
 // AcquireUserSlot attempts to acquire a concurrency slot for a user.

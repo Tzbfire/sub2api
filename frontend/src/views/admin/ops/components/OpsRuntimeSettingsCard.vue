@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { opsAPI } from '@/api/admin/ops'
 import type { OpsAlertRuntimeSettings } from '../types'
+import type { ImageGatewayRuntimeSettings } from '@/api/admin/ops'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 
 const { t } = useI18n()
@@ -13,6 +14,10 @@ const loading = ref(false)
 const saving = ref(false)
 
 const alertSettings = ref<OpsAlertRuntimeSettings | null>(null)
+
+const imageGatewaySettings = ref<ImageGatewayRuntimeSettings | null>(null)
+const imageGatewayDraft = ref<number>(0)
+const imageGatewaySaving = ref(false)
 
 const showAlertEditor = ref(false)
 const draftAlert = ref<OpsAlertRuntimeSettings | null>(null)
@@ -132,11 +137,38 @@ async function loadSettings() {
   loading.value = true
   try {
     alertSettings.value = await opsAPI.getAlertRuntimeSettings()
+    try {
+      const ig = await opsAPI.getImageGatewayRuntimeSettings()
+      imageGatewaySettings.value = ig
+      imageGatewayDraft.value = ig.max_concurrent
+    } catch (err: any) {
+      console.error('[OpsRuntimeSettingsCard] Failed to load image gateway settings', err)
+    }
   } catch (err: any) {
     console.error('[OpsRuntimeSettingsCard] Failed to load runtime settings', err)
     appStore.showError(err?.response?.data?.detail || t('admin.ops.runtime.loadFailed'))
   } finally {
     loading.value = false
+  }
+}
+
+async function saveImageGatewaySettings() {
+  const v = Number(imageGatewayDraft.value)
+  if (!Number.isFinite(v) || v < 0 || v > 1000) {
+    appStore.showError('max_concurrent 必须在 0..1000 之间（0 = 不限）')
+    return
+  }
+  imageGatewaySaving.value = true
+  try {
+    const cur = imageGatewaySettings.value || { max_concurrent: 0, mode: 'reject' as const, max_queue_size: 20, max_wait_seconds: 15 }
+    imageGatewaySettings.value = await opsAPI.updateImageGatewayRuntimeSettings({ ...cur, max_concurrent: v })
+    imageGatewayDraft.value = imageGatewaySettings.value.max_concurrent
+    appStore.showSuccess(t('admin.ops.runtime.saveSuccess'))
+  } catch (err: any) {
+    console.error('[OpsRuntimeSettingsCard] Failed to save image gateway settings', err)
+    appStore.showError(err?.response?.data?.detail || t('admin.ops.runtime.saveFailed'))
+  } finally {
+    imageGatewaySaving.value = false
   }
 }
 
@@ -299,6 +331,38 @@ onMounted(() => {
             </div>
           </details>
         </div>
+      </div>
+
+      <div class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-700/50">
+        <div class="mb-3 flex items-center justify-between">
+          <div>
+            <h4 class="text-sm font-semibold text-gray-900 dark:text-white">图片网关并发上限</h4>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">每实例同时进行的图片请求上限（0 = 不限）。多副本部署时，扩 Pod 自动按比例扩容总容量。</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <input
+            v-model.number="imageGatewayDraft"
+            type="number"
+            min="0"
+            max="1000"
+            class="input w-32"
+            :disabled="imageGatewaySaving"
+          />
+          <button
+            class="btn btn-sm btn-primary"
+            :disabled="imageGatewaySaving || imageGatewayDraft === imageGatewaySettings?.max_concurrent"
+            @click="saveImageGatewaySettings"
+          >
+            {{ imageGatewaySaving ? t('common.saving') : t('common.save') }}
+          </button>
+          <span v-if="imageGatewaySettings" class="text-xs text-gray-500">
+            当前生效: {{ imageGatewaySettings.max_concurrent === 0 ? '不限' : imageGatewaySettings.max_concurrent }}
+          </span>
+        </div>
+        <p class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          建议：2G 内存实例设 4-6；4G 设 8-12。超限请求返回 429 rate_limit_exceeded。
+        </p>
       </div>
     </div>
   </div>

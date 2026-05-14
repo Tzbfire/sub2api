@@ -575,3 +575,115 @@ func (s *OpsService) UpdateMetricThresholds(ctx context.Context, cfg *OpsMetricT
 	_ = json.Unmarshal(raw, updated)
 	return updated, nil
 }
+
+// =========================
+// Image gateway runtime settings
+// =========================
+
+// ImageGatewayRuntimeSettings 图片网关运行时配置（DB-backed，可在 UI 实时调整）。
+//
+// MaxConcurrent 是**每实例**正在执行的图片请求上限（atomic 计数，纯本地）。
+// 设计目标：防 OOM。每副本在自己 RAM budget 内独立守门，扩 Pod 自动扩容总容量。
+// 0 表示不限。
+//
+// Mode 决定超过 MaxConcurrent 时的行为：
+//   - "reject" (默认): 立即返回 429。
+//   - "queue":         排队等待最多 MaxWaitSeconds 秒，超时或队列满则 429。
+//
+// MaxQueueSize 是 queue 模式下的最大排队数（防 OOM 反压）。0 = 不限（不推荐）。
+// MaxWaitSeconds 是 queue 模式下单个请求的最长等待时间。0 表示用默认 15s。
+type ImageGatewayRuntimeSettings struct {
+	MaxConcurrent  int    `json:"max_concurrent"`
+	Mode           string `json:"mode"`
+	MaxQueueSize   int    `json:"max_queue_size"`
+	MaxWaitSeconds int    `json:"max_wait_seconds"`
+}
+
+const (
+	ImageGatewayModeReject = "reject"
+	ImageGatewayModeQueue  = "queue"
+)
+
+func defaultImageGatewayRuntimeSettings() *ImageGatewayRuntimeSettings {
+	return &ImageGatewayRuntimeSettings{
+		MaxConcurrent:  0,
+		Mode:           ImageGatewayModeReject,
+		MaxQueueSize:   20,
+		MaxWaitSeconds: 15,
+	}
+}
+
+func validateImageGatewayRuntimeSettings(cfg *ImageGatewayRuntimeSettings) error {
+	if cfg == nil {
+		return errors.New("invalid config")
+	}
+	if cfg.MaxConcurrent < 0 || cfg.MaxConcurrent > 1024 {
+		return errors.New("max_concurrent must be between 0 and 1024 (0 = unlimited)")
+	}
+	if cfg.Mode == "" {
+		cfg.Mode = ImageGatewayModeReject
+	}
+	if cfg.Mode != ImageGatewayModeReject && cfg.Mode != ImageGatewayModeQueue {
+		return errors.New("mode must be 'reject' or 'queue'")
+	}
+	if cfg.MaxQueueSize < 0 || cfg.MaxQueueSize > 10000 {
+		return errors.New("max_queue_size must be between 0 and 10000")
+	}
+	if cfg.MaxWaitSeconds < 0 || cfg.MaxWaitSeconds > 600 {
+		return errors.New("max_wait_seconds must be between 0 and 600")
+	}
+	return nil
+}
+
+// GetImageGatewayRuntimeSettings 读取图片网关运行时配置（DB-backed，缺失则返回默认）。
+func (s *OpsService) GetImageGatewayRuntimeSettings(ctx context.Context) (*ImageGatewayRuntimeSettings, error) {
+	cfg := defaultImageGatewayRuntimeSettings()
+	if s == nil || s.settingRepo == nil {
+		return cfg, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyImageGatewayRuntimeSettings)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return cfg, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(raw), cfg); err != nil {
+		return defaultImageGatewayRuntimeSettings(), nil
+	}
+	// 向后兼容：旧数据可能没有这些字段
+	if cfg.Mode == "" {
+		cfg.Mode = ImageGatewayModeReject
+	}
+	if cfg.MaxQueueSize == 0 && cfg.Mode == ImageGatewayModeQueue {
+		cfg.MaxQueueSize = 20
+	}
+	if cfg.MaxWaitSeconds == 0 && cfg.Mode == ImageGatewayModeQueue {
+		cfg.MaxWaitSeconds = 15
+	}
+	return cfg, nil
+}
+
+// UpdateImageGatewayRuntimeSettings 写入图片网关运行时配置。
+func (s *OpsService) UpdateImageGatewayRuntimeSettings(ctx context.Context, cfg *ImageGatewayRuntimeSettings) (*ImageGatewayRuntimeSettings, error) {
+	if s == nil || s.settingRepo == nil {
+		return nil, errors.New("setting repository not initialized")
+	}
+	if err := validateImageGatewayRuntimeSettings(cfg); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.settingRepo.Set(ctx, SettingKeyImageGatewayRuntimeSettings, string(raw)); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}

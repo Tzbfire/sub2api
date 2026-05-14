@@ -276,6 +276,10 @@ const (
 	// SettingKeyOpsRuntimeLogConfig stores JSON config for runtime log settings.
 	SettingKeyOpsRuntimeLogConfig = "ops_runtime_log_config"
 
+	// SettingKeyImageGatewayRuntimeSettings stores JSON config for image gateway
+	// runtime settings (e.g. per-instance max in-flight image requests for OOM防护).
+	SettingKeyImageGatewayRuntimeSettings = "image_gateway_runtime_settings"
+
 	// =========================
 	// Channel Monitor (渠道监控)
 	// =========================

@@ -140,5 +140,6 @@ func (f *fakeAccount) SessionID() string                    { return "" }
 func (f *fakeAccount) ProxyURL() string                     { return "" }
 func (f *fakeAccount) IsAPIKey() bool                       { return f.apiKey }
 func (f *fakeAccount) APIKey() string                       { return "" }
+func (f *fakeAccount) MaxConcurrency() int                  { return 0 }
 func (f *fakeAccount) LegacyImagesEnabled() bool            { return f.legacyEnabled }
 func (f *fakeAccount) QuotaSnapshot() *AccountQuotaSnapshot { return nil }
