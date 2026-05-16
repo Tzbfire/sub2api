@@ -112,11 +112,16 @@ func (d *ResponsesToolDriver) clientForProxy(proxy string) *req.Client {
 		return base
 	}
 	if v, ok := d.proxyClients.Load(proxy); ok {
-		return v.(*req.Client)
+		if c, ok := v.(*req.Client); ok {
+			return c
+		}
 	}
 	c := base.Clone().SetProxyURL(proxy)
 	actual, _ := d.proxyClients.LoadOrStore(proxy, c)
-	return actual.(*req.Client)
+	if ac, ok := actual.(*req.Client); ok {
+		return ac
+	}
+	return c
 }
 
 func (d *ResponsesToolDriver) now() time.Time {
