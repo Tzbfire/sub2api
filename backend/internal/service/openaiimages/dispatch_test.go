@@ -332,3 +332,183 @@ func TestDispatch_ContextCancelled(t *testing.T) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestDispatchMultiImage_SplitsIntoSingleImageDispatches(t *testing.T) {
+	src := &fakeSource{accounts: []AccountView{
+		&dispAccount{id: 1, web: true},
+		&dispAccount{id: 2, web: true},
+		&dispAccount{id: 3, web: true},
+	}}
+	drv := &recordingDriver{name: DriverWeb}
+	in := DispatchInput{
+		Capability: Capability{DriverName: DriverWeb, Plan: "basic"},
+		Filter:     PoolFilter{Driver: DriverWeb},
+		Request:    &ImagesRequest{Prompt: "draw", N: 3},
+	}
+
+	out, err := DispatchMultiImage(context.Background(), src, newRegistry(DriverWeb, drv), in,
+		DispatchOptions{}, 3)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(out.Result.Items) != 3 {
+		t.Fatalf("items=%d want 3", len(out.Result.Items))
+	}
+	if out.Result.Usage.ImagesCount != 3 {
+		t.Errorf("usage images=%d want 3", out.Result.Usage.ImagesCount)
+	}
+	if len(drv.requestNs) != 3 {
+		t.Fatalf("driver calls=%d want 3", len(drv.requestNs))
+	}
+	for _, n := range drv.requestNs {
+		if n != 1 {
+			t.Fatalf("forward received N=%d, want each single dispatch N=1", n)
+		}
+	}
+	if len(src.successCalls) != 3 {
+		t.Errorf("success callbacks=%v want 3", src.successCalls)
+	}
+	if src.releaseCount != 3 {
+		t.Errorf("release count=%d want 3", src.releaseCount)
+	}
+}
+
+func TestDispatchMultiImage_ReturnsPartialSuccess(t *testing.T) {
+	src := &fakeSource{accounts: []AccountView{
+		&dispAccount{id: 1, web: true},
+		&dispAccount{id: 2, web: true},
+		&dispAccount{id: 3, web: true},
+	}}
+	drv := &recordingDriver{
+		name:     DriverWeb,
+		failOnce: true,
+	}
+	in := DispatchInput{
+		Capability: Capability{DriverName: DriverWeb, Plan: "basic"},
+		Filter:     PoolFilter{Driver: DriverWeb},
+		Request:    &ImagesRequest{Prompt: "draw", N: 3},
+	}
+
+	out, err := DispatchMultiImage(context.Background(), src, newRegistry(DriverWeb, drv), in,
+		DispatchOptions{MaxAttempts: 1}, 3)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(out.Result.Items) != 2 {
+		t.Fatalf("items=%d want 2 partial successes", len(out.Result.Items))
+	}
+	if out.Result.Usage.ImagesCount != 2 {
+		t.Errorf("usage images=%d want 2", out.Result.Usage.ImagesCount)
+	}
+}
+
+func TestDispatchMultiImage_RetriesNoAccountAfterWaveSuccess(t *testing.T) {
+	src := newLeasedSource([]AccountView{
+		&dispAccount{id: 1, web: true},
+		&dispAccount{id: 2, web: true},
+	})
+	drv := &recordingDriver{name: DriverWeb}
+	in := DispatchInput{
+		Capability: Capability{DriverName: DriverWeb, Plan: "basic"},
+		Filter:     PoolFilter{Driver: DriverWeb},
+		Request:    &ImagesRequest{Prompt: "draw", N: 3},
+	}
+
+	out, err := DispatchMultiImage(context.Background(), src, newRegistry(DriverWeb, drv), in,
+		DispatchOptions{}, 3)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(out.Result.Items) != 3 {
+		t.Fatalf("items=%d want 3", len(out.Result.Items))
+	}
+	if src.successCount() != 3 {
+		t.Errorf("success callbacks=%d want 3", src.successCount())
+	}
+	if src.releaseCount() != 3 {
+		t.Errorf("release count=%d want 3", src.releaseCount())
+	}
+}
+
+type recordingDriver struct {
+	mu        sync.Mutex
+	name      string
+	failOnce  bool
+	calls     int
+	requestNs []int
+}
+
+func (d *recordingDriver) Name() string { return d.name }
+
+func (d *recordingDriver) Forward(_ context.Context, _ AccountView, req *ImagesRequest) (*ImageResult, error) {
+	d.mu.Lock()
+	d.calls++
+	call := d.calls
+	d.requestNs = append(d.requestNs, req.N)
+	d.mu.Unlock()
+
+	if d.failOnce && call == 1 {
+		return nil, &UpstreamError{HTTPStatus: 400, Reason: "bad image"}
+	}
+	return &ImageResult{
+		Items: []ImageItem{{B64JSON: "IMG"}},
+		Usage: Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3, ImagesCount: 1},
+		Model: req.Model,
+	}, nil
+}
+
+type leasedSource struct {
+	mu       sync.Mutex
+	accounts []AccountView
+	leased   map[int64]bool
+	success  int
+	released int
+}
+
+func newLeasedSource(accounts []AccountView) *leasedSource {
+	return &leasedSource{accounts: accounts, leased: map[int64]bool{}}
+}
+
+func (s *leasedSource) Select(_ context.Context, _ PoolFilter) (AccountView, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, account := range s.accounts {
+		if s.leased[account.ID()] {
+			continue
+		}
+		s.leased[account.ID()] = true
+		var once sync.Once
+		return account, func() {
+			once.Do(func() {
+				s.mu.Lock()
+				delete(s.leased, account.ID())
+				s.released++
+				s.mu.Unlock()
+			})
+		}, nil
+	}
+	return nil, nil, ErrNoAccountAvailable
+}
+
+func (s *leasedSource) OnSuccess(_ context.Context, _ AccountView, _ *ImageResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.success++
+	return nil
+}
+
+func (s *leasedSource) OnRateLimit(_ context.Context, _ AccountView, _ time.Time) error { return nil }
+func (s *leasedSource) OnTransient(_ context.Context, _ AccountView, _ error) error     { return nil }
+func (s *leasedSource) OnAuthFailure(_ context.Context, _ AccountView, _ error) error   { return nil }
+
+func (s *leasedSource) successCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.success
+}
+
+func (s *leasedSource) releaseCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.released
+}

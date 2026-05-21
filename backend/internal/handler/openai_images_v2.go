@@ -320,14 +320,22 @@ func (h *OpenAIImagesV2Handler) run(c *gin.Context, req *openaiimages.ImagesRequ
 		zap.String("driver", cap.DriverName),
 	)
 
-	// 整个分发流程的硬上限：必须严格大于 N × AttemptBudget，否则 MaxAttempts 与
-	// RefusalRetryLimit 形同虚设（200s 单次 + 240s 总 = 最多 1 次有效尝试）。
-	// 460s = 2 × 200s（attempt budget）+ 60s 选号/网络/SSE 关闭余量，
-	// 配合 sseTTFBTimeout(60s) / sseIdleTimeout(90s) 软超时早退，实际可放下 3-4 次尝试。
-	dispatchCtx, cancel := context.WithTimeout(c.Request.Context(), 460*time.Second)
+	splitMultiImage := shouldSplitMultiImageDispatch(cap, req)
+	parallelism := 1
+	if splitMultiImage {
+		parallelism = h.multiImageDispatchParallelism(c.Request.Context(), in.Filter, req.N, reqLog)
+		reqLog.Info("openaiimages.multi_dispatch_enabled",
+			zap.Int("n", req.N),
+			zap.Int("parallelism", parallelism),
+		)
+	}
+
+	// 整个分发流程的硬上限：单图保留原 460s；多图拆分后按并发批次数扩展，
+	// 避免可用账号少时后续单图还没排到就被整体 ctx 提前取消。
+	dispatchCtx, cancel := context.WithTimeout(c.Request.Context(), imageDispatchTimeout(req.N, parallelism, splitMultiImage, h.dispatchO.AttemptBudget))
 	defer cancel()
 	upstreamStart := time.Now()
-	res, err := openaiimages.Dispatch(dispatchCtx, h.source, h.registry, in, h.dispatchO)
+	res, err := h.dispatchImageRequest(dispatchCtx, in, splitMultiImage, parallelism)
 	service.SetOpsLatencyMs(c, service.OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		reqLog.Warn("openaiimages.dispatch_failed", zap.Error(err))
@@ -362,6 +370,75 @@ func (h *OpenAIImagesV2Handler) run(c *gin.Context, req *openaiimages.ImagesRequ
 
 	// 异步写入 usage_logs / 扣余额 / 更新 api_key 配额，与文本入口保持一致。
 	h.recordImageUsage(c, req, res, apiKey, subscription, channelMapping, requestStart, reqLog)
+}
+
+func (h *OpenAIImagesV2Handler) dispatchImageRequest(
+	ctx context.Context,
+	in openaiimages.DispatchInput,
+	splitMultiImage bool,
+	parallelism int,
+) (*openaiimages.DispatchResult, error) {
+	if splitMultiImage {
+		return openaiimages.DispatchMultiImage(ctx, h.source, h.registry, in, h.dispatchO, parallelism)
+	}
+	return openaiimages.Dispatch(ctx, h.source, h.registry, in, h.dispatchO)
+}
+
+func shouldSplitMultiImageDispatch(cap openaiimages.Capability, req *openaiimages.ImagesRequest) bool {
+	return req != nil && req.N > 1 && cap.DriverName == openaiimages.DriverWeb
+}
+
+const maxMultiImageDispatchParallelism = 4
+
+func (h *OpenAIImagesV2Handler) multiImageDispatchParallelism(
+	ctx context.Context,
+	filter openaiimages.PoolFilter,
+	n int,
+	reqLog *zap.Logger,
+) int {
+	parallelism := n
+	if parallelism > maxMultiImageDispatchParallelism {
+		parallelism = maxMultiImageDispatchParallelism
+	}
+	if parallelism < 1 {
+		return 1
+	}
+	if h == nil || h.pool == nil || h.pool.List == nil {
+		return parallelism
+	}
+	accounts, err := h.pool.List(ctx, filter)
+	if err != nil {
+		if reqLog != nil {
+			reqLog.Warn("openaiimages.multi_dispatch_account_count_failed", zap.Error(err))
+		}
+		return parallelism
+	}
+	if len(accounts) > 0 && parallelism > len(accounts) {
+		parallelism = len(accounts)
+	}
+	if parallelism < 1 {
+		return 1
+	}
+	return parallelism
+}
+
+func imageDispatchTimeout(n int, parallelism int, splitMultiImage bool, attemptBudget time.Duration) time.Duration {
+	base := 460 * time.Second
+	if !splitMultiImage || n <= 1 {
+		return base
+	}
+	if parallelism < 1 {
+		parallelism = 1
+	}
+	if attemptBudget <= 0 {
+		attemptBudget = 200 * time.Second
+	}
+	waves := (n + parallelism - 1) / parallelism
+	timeout := time.Duration(waves)*attemptBudget + 60*time.Second
+	if timeout < base {
+		return base
+	}
+	return timeout
 }
 
 // recordImageUsage 在请求成功后构造 OpenAIForwardResult 并提交到 usage worker pool。
