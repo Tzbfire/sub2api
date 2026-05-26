@@ -5727,6 +5727,16 @@ export default {
         saved: '429 默认回避设置保存成功',
         saveFailed: '保存 429 默认回避设置失败'
       },
+      openaiCodexQuotaGuard: {
+        title: 'OpenAI Codex 配额守卫',
+        description: '当 OpenAI OAuth 账号的 Codex 5h 或 7d 配额达到阈值时，主动暂停该账号调度',
+        enabled: '启用 Codex 配额守卫',
+        enabledHint: '根据 Codex 配额重置响应头，在完全耗尽前暂停账号并等待恢复',
+        thresholdPercent: '休眠阈值（%）',
+        thresholdPercentHint: '默认 90%；可设置 1-100，同时作用于 5h 和 7d Codex 配额窗口',
+        saved: 'OpenAI Codex 配额守卫设置保存成功',
+        saveFailed: '保存 OpenAI Codex 配额守卫设置失败'
+      },
       streamTimeout: {
         title: '流超时处理',
         description: '配置上游响应超时时的账户处理策略，避免问题账户持续被选中',

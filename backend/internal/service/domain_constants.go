@@ -307,6 +307,9 @@ const (
 	// SettingKeyRateLimit429CooldownSettings stores JSON config for 429 fallback cooldown handling.
 	SettingKeyRateLimit429CooldownSettings = "rate_limit_429_cooldown_settings"
 
+	// SettingKeyOpenAICodexQuotaGuardSettings stores JSON config for proactive OpenAI Codex quota guarding.
+	SettingKeyOpenAICodexQuotaGuardSettings = "openai_codex_quota_guard_settings"
+
 	// =========================
 	// Stream Timeout Handling
 	// =========================

@@ -274,6 +274,12 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int  `json:"cooldown_seconds"`
 }
 
+// OpenAICodexQuotaGuardSettings OpenAI Codex 配额主动休眠配置 DTO
+type OpenAICodexQuotaGuardSettings struct {
+	Enabled          bool    `json:"enabled"`
+	ThresholdPercent float64 `json:"threshold_percent"`
+}
+
 // StreamTimeoutSettings 流超时处理配置 DTO
 type StreamTimeoutSettings struct {
 	Enabled                bool   `json:"enabled"`

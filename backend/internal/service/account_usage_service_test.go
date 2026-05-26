@@ -92,7 +92,7 @@ func TestExtractOpenAICodexProbeUpdatesAccepts429WithCodexHeaders(t *testing.T) 
 	}
 }
 
-func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *testing.T) {
+func TestAccountUsageService_PersistOpenAICodexProbeSnapshotAppliesQuotaGuard(t *testing.T) {
 	t.Parallel()
 
 	repo := &accountUsageCodexProbeRepo{
@@ -100,10 +100,19 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 		rateLimitCh:   make(chan time.Time, 1),
 	}
 	svc := &AccountUsageService{accountRepo: repo}
+	used := 100.0
+	reset := 7200
+	window := 10080
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:       &used,
+		PrimaryResetAfterSeconds: &reset,
+		PrimaryWindowMinutes:     &window,
+		UpdatedAt:                time.Now().UTC().Format(time.RFC3339),
+	}
 	svc.persistOpenAICodexProbeSnapshot(321, map[string]any{
 		"codex_7d_used_percent": 100.0,
 		"codex_7d_reset_at":     time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339),
-	})
+	}, snapshot)
 
 	select {
 	case updates := <-repo.updateExtraCh:
@@ -116,8 +125,11 @@ func TestAccountUsageService_PersistOpenAICodexProbeSnapshotOnlyUpdatesExtra(t *
 
 	select {
 	case got := <-repo.rateLimitCh:
-		t.Fatalf("不应将探测快照写入运行时限流状态: %v", got)
-	case <-time.After(200 * time.Millisecond):
+		if !got.After(time.Now()) {
+			t.Fatalf("expected future resetAt, got %v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待 codex 探测快照写入运行时限流状态超时")
 	}
 }
 

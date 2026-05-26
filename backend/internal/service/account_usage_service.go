@@ -266,6 +266,7 @@ type AccountUsageService struct {
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
+	settingService          *SettingService
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -278,6 +279,7 @@ func NewAccountUsageService(
 	cache *UsageCache,
 	identityCache IdentityCache,
 	tlsFPProfileService *TLSFingerprintProfileService,
+	settingService *SettingService,
 ) *AccountUsageService {
 	return &AccountUsageService{
 		accountRepo:             accountRepo,
@@ -288,6 +290,7 @@ func NewAccountUsageService(
 		cache:                   cache,
 		identityCache:           identityCache,
 		tlsFPProfileService:     tlsFPProfileService,
+		settingService:          settingService,
 	}
 }
 
@@ -646,18 +649,19 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	updates, err := extractOpenAICodexProbeUpdates(resp)
+	snapshot, err := extractOpenAICodexProbeSnapshot(resp)
 	if err != nil {
 		return nil, err
 	}
+	updates := buildCodexUsageExtraUpdates(snapshot, time.Now())
 	if len(updates) > 0 {
-		s.persistOpenAICodexProbeSnapshot(account.ID, updates)
+		s.persistOpenAICodexProbeSnapshot(account.ID, updates, snapshot)
 		return updates, nil
 	}
 	return nil, nil
 }
 
-func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, updates map[string]any) {
+func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, updates map[string]any, snapshot ...*OpenAICodexUsageSnapshot) {
 	if s == nil || s.accountRepo == nil || accountID <= 0 {
 		return
 	}
@@ -669,20 +673,32 @@ func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, u
 		updateCtx, updateCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer updateCancel()
 		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		if len(snapshot) > 0 && snapshot[0] != nil {
+			settings := getOpenAICodexQuotaGuardSettings(updateCtx, s.settingService, accountID)
+			applyOpenAICodexQuotaGuard(updateCtx, s.accountRepo, accountID, snapshot[0], settings, time.Now())
+		}
 	}()
 }
 
-func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error) {
+func extractOpenAICodexProbeSnapshot(resp *http.Response) (*OpenAICodexUsageSnapshot, error) {
 	if resp == nil {
 		return nil, nil
 	}
 	if snapshot := ParseCodexRateLimitHeaders(resp.Header); snapshot != nil {
-		return buildCodexUsageExtraUpdates(snapshot, time.Now()), nil
+		return snapshot, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("openai codex probe returned status %d", resp.StatusCode)
 	}
 	return nil, nil
+}
+
+func extractOpenAICodexProbeUpdates(resp *http.Response) (map[string]any, error) {
+	snapshot, err := extractOpenAICodexProbeSnapshot(resp)
+	if err != nil || snapshot == nil {
+		return nil, err
+	}
+	return buildCodexUsageExtraUpdates(snapshot, time.Now()), nil
 }
 
 func mergeAccountExtra(account *Account, updates map[string]any) {

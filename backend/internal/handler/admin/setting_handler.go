@@ -2530,6 +2530,58 @@ func (h *SettingHandler) UpdateRateLimit429CooldownSettings(c *gin.Context) {
 	})
 }
 
+// GetOpenAICodexQuotaGuardSettings 获取 OpenAI Codex 配额主动休眠配置
+// GET /api/v1/admin/settings/openai-codex-quota-guard
+func (h *SettingHandler) GetOpenAICodexQuotaGuardSettings(c *gin.Context) {
+	settings, err := h.settingService.GetOpenAICodexQuotaGuardSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.OpenAICodexQuotaGuardSettings{
+		Enabled:          settings.Enabled,
+		ThresholdPercent: settings.ThresholdPercent,
+	})
+}
+
+// UpdateOpenAICodexQuotaGuardSettingsRequest 更新 OpenAI Codex 配额主动休眠配置请求
+type UpdateOpenAICodexQuotaGuardSettingsRequest struct {
+	Enabled          bool    `json:"enabled"`
+	ThresholdPercent float64 `json:"threshold_percent"`
+}
+
+// UpdateOpenAICodexQuotaGuardSettings 更新 OpenAI Codex 配额主动休眠配置
+// PUT /api/v1/admin/settings/openai-codex-quota-guard
+func (h *SettingHandler) UpdateOpenAICodexQuotaGuardSettings(c *gin.Context) {
+	var req UpdateOpenAICodexQuotaGuardSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	settings := &service.OpenAICodexQuotaGuardSettings{
+		Enabled:          req.Enabled,
+		ThresholdPercent: req.ThresholdPercent,
+	}
+
+	if err := h.settingService.SetOpenAICodexQuotaGuardSettings(c.Request.Context(), settings); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	updatedSettings, err := h.settingService.GetOpenAICodexQuotaGuardSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.OpenAICodexQuotaGuardSettings{
+		Enabled:          updatedSettings.Enabled,
+		ThresholdPercent: updatedSettings.ThresholdPercent,
+	})
+}
+
 // GetStreamTimeoutSettings 获取流超时处理配置
 // GET /api/v1/admin/settings/stream-timeout
 func (h *SettingHandler) GetStreamTimeoutSettings(c *gin.Context) {

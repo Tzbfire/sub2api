@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,65 @@ type openAICodexSnapshotAsyncRepo struct {
 type openAICodexExtraListRepo struct {
 	stubOpenAIAccountRepo
 	rateLimitCh chan time.Time
+}
+
+type openAIWSQuotaGuardSettingRepo struct {
+	data map[string]string
+}
+
+func (r *openAIWSQuotaGuardSettingRepo) Get(_ context.Context, key string) (*Setting, error) {
+	if v, ok := r.data[key]; ok {
+		return &Setting{Key: key, Value: v}, nil
+	}
+	return nil, ErrSettingNotFound
+}
+
+func (r *openAIWSQuotaGuardSettingRepo) GetValue(_ context.Context, key string) (string, error) {
+	if v, ok := r.data[key]; ok {
+		return v, nil
+	}
+	return "", nil
+}
+
+func (r *openAIWSQuotaGuardSettingRepo) Set(_ context.Context, key, value string) error {
+	if r.data == nil {
+		r.data = make(map[string]string)
+	}
+	r.data[key] = value
+	return nil
+}
+
+func (r *openAIWSQuotaGuardSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, key := range keys {
+		if v, ok := r.data[key]; ok {
+			result[key] = v
+		}
+	}
+	return result, nil
+}
+
+func (r *openAIWSQuotaGuardSettingRepo) SetMultiple(_ context.Context, settings map[string]string) error {
+	if r.data == nil {
+		r.data = make(map[string]string)
+	}
+	for key, value := range settings {
+		r.data[key] = value
+	}
+	return nil
+}
+
+func (r *openAIWSQuotaGuardSettingRepo) GetAll(_ context.Context) (map[string]string, error) {
+	result := make(map[string]string, len(r.data))
+	for key, value := range r.data {
+		result[key] = value
+	}
+	return result, nil
+}
+
+func (r *openAIWSQuotaGuardSettingRepo) Delete(_ context.Context, key string) error {
+	delete(r.data, key)
+	return nil
 }
 
 func (r *openAIWSRateLimitSignalRepo) SetRateLimited(_ context.Context, _ int64, resetAt time.Time) error {
@@ -345,7 +405,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ErrorEventUsageL
 	}
 }
 
-func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotSetRateLimit(t *testing.T) {
+func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ThresholdReachedSetsRateLimit(t *testing.T) {
 	repo := &openAICodexSnapshotAsyncRepo{
 		updateExtraCh: make(chan map[string]any, 1),
 		rateLimitCh:   make(chan time.Time, 1),
@@ -370,8 +430,9 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_ExhaustedSnapshotDoesNotS
 
 	select {
 	case resetAt := <-repo.rateLimitCh:
-		t.Fatalf("不应因仅写入快照而生成运行时限流时间: %v", resetAt)
+		require.True(t, resetAt.After(time.Now()))
 	case <-time.After(2 * time.Second):
+		t.Fatal("等待 codex 配额守卫写入运行时限流状态超时")
 	}
 }
 
@@ -382,7 +443,7 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_NonExhaustedSnapshotDoesN
 	}
 	svc := &OpenAIGatewayService{accountRepo: repo}
 	snapshot := &OpenAICodexUsageSnapshot{
-		PrimaryUsedPercent:         ptrFloat64WS(94),
+		PrimaryUsedPercent:         ptrFloat64WS(89),
 		PrimaryResetAfterSeconds:   ptrIntWS(3600),
 		PrimaryWindowMinutes:       ptrIntWS(10080),
 		SecondaryUsedPercent:       ptrFloat64WS(22),
@@ -400,6 +461,42 @@ func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_NonExhaustedSnapshotDoesN
 	select {
 	case resetAt := <-repo.rateLimitCh:
 		t.Fatalf("不应写入运行时限流时间: %v", resetAt)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestOpenAIGatewayService_UpdateCodexUsageSnapshot_GuardDisabledSkipsRateLimit(t *testing.T) {
+	repo := &openAICodexSnapshotAsyncRepo{
+		updateExtraCh: make(chan map[string]any, 1),
+		rateLimitCh:   make(chan time.Time, 1),
+	}
+	data, _ := json.Marshal(OpenAICodexQuotaGuardSettings{Enabled: false, ThresholdPercent: 90})
+	settingRepo := &openAIWSQuotaGuardSettingRepo{data: map[string]string{
+		SettingKeyOpenAICodexQuotaGuardSettings: string(data),
+	}}
+	svc := &OpenAIGatewayService{
+		accountRepo:    repo,
+		settingService: NewSettingService(settingRepo, nil),
+	}
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:         ptrFloat64WS(100),
+		PrimaryResetAfterSeconds:   ptrIntWS(3600),
+		PrimaryWindowMinutes:       ptrIntWS(10080),
+		SecondaryUsedPercent:       ptrFloat64WS(12),
+		SecondaryResetAfterSeconds: ptrIntWS(1200),
+		SecondaryWindowMinutes:     ptrIntWS(300),
+	}
+	svc.updateCodexUsageSnapshot(context.Background(), 603, snapshot)
+
+	select {
+	case <-repo.updateExtraCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("等待 codex 快照落库超时")
+	}
+
+	select {
+	case resetAt := <-repo.rateLimitCh:
+		t.Fatalf("不应在守卫关闭时写入运行时限流时间: %v", resetAt)
 	case <-time.After(200 * time.Millisecond):
 	}
 }

@@ -5567,6 +5567,16 @@ export default {
         saved: '429 default cooldown settings saved',
         saveFailed: 'Failed to save 429 default cooldown settings'
       },
+      openaiCodexQuotaGuard: {
+        title: 'OpenAI Codex Quota Guard',
+        description: 'Pause OpenAI OAuth accounts when Codex 5h or 7d quota usage reaches the configured threshold',
+        enabled: 'Enable Codex Quota Guard',
+        enabledHint: 'Use Codex quota reset headers to pause the account before it is fully exhausted',
+        thresholdPercent: 'Pause Threshold (%)',
+        thresholdPercentHint: 'Default is 90%; accepts 1-100 and applies to both 5h and 7d Codex quota windows',
+        saved: 'OpenAI Codex quota guard settings saved',
+        saveFailed: 'Failed to save OpenAI Codex quota guard settings'
+      },
       streamTimeout: {
         title: 'Stream Timeout Handling',
         description: 'Configure account handling strategy when upstream response times out',

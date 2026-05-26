@@ -393,6 +393,14 @@ type RateLimit429CooldownSettings struct {
 	CooldownSeconds int `json:"cooldown_seconds"`
 }
 
+// OpenAICodexQuotaGuardSettings OpenAI Codex 配额主动休眠配置
+type OpenAICodexQuotaGuardSettings struct {
+	// Enabled 是否在 Codex 配额达到阈值时主动暂停账号调度
+	Enabled bool `json:"enabled"`
+	// ThresholdPercent 触发主动休眠的用量百分比阈值
+	ThresholdPercent float64 `json:"threshold_percent"`
+}
+
 // DefaultOverloadCooldownSettings 返回默认的过载冷却配置（启用，10分钟）
 func DefaultOverloadCooldownSettings() *OverloadCooldownSettings {
 	return &OverloadCooldownSettings{
@@ -406,6 +414,14 @@ func DefaultRateLimit429CooldownSettings() *RateLimit429CooldownSettings {
 	return &RateLimit429CooldownSettings{
 		Enabled:         true,
 		CooldownSeconds: 5,
+	}
+}
+
+// DefaultOpenAICodexQuotaGuardSettings 返回默认的 OpenAI Codex 配额主动休眠配置（启用，90%）
+func DefaultOpenAICodexQuotaGuardSettings() *OpenAICodexQuotaGuardSettings {
+	return &OpenAICodexQuotaGuardSettings{
+		Enabled:          true,
+		ThresholdPercent: defaultOpenAICodexQuotaGuardThresholdPercent,
 	}
 }
 

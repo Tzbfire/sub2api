@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net/http"
 	"sort"
@@ -57,6 +58,8 @@ const (
 	codexCLIVersion                    = "0.125.0"
 	// Codex 限额快照仅用于后台展示/诊断，不需要每个成功请求都立即落库。
 	openAICodexSnapshotPersistMinInterval = 30 * time.Second
+
+	defaultOpenAICodexQuotaGuardThresholdPercent = 90.0
 )
 
 // OpenAI allowed headers whitelist (for non-passthrough).
@@ -5590,6 +5593,88 @@ func codexResetAtRFC3339(base time.Time, resetAfterSeconds *int) *string {
 	return &resetAt
 }
 
+func isValidOpenAICodexQuotaGuardThreshold(threshold float64) bool {
+	return !math.IsNaN(threshold) && !math.IsInf(threshold, 0) && threshold >= 1 && threshold <= 100
+}
+
+func normalizeOpenAICodexQuotaGuardThreshold(threshold float64) float64 {
+	if !isValidOpenAICodexQuotaGuardThreshold(threshold) {
+		return defaultOpenAICodexQuotaGuardThresholdPercent
+	}
+	return threshold
+}
+
+func calculateOpenAICodexQuotaGuardReset(snapshot *OpenAICodexUsageSnapshot, settings *OpenAICodexQuotaGuardSettings, now time.Time) *time.Time {
+	if snapshot == nil {
+		return nil
+	}
+	if settings == nil {
+		settings = DefaultOpenAICodexQuotaGuardSettings()
+	}
+	if !settings.Enabled {
+		return nil
+	}
+
+	normalized := snapshot.Normalize()
+	if normalized == nil {
+		return nil
+	}
+
+	threshold := normalizeOpenAICodexQuotaGuardThreshold(settings.ThresholdPercent)
+	baseTime := codexSnapshotBaseTime(snapshot, now)
+	var resetAt *time.Time
+	appendIfExceeded := func(usedPercent *float64, resetAfterSeconds *int) {
+		if usedPercent == nil || resetAfterSeconds == nil || *usedPercent < threshold {
+			return
+		}
+		reset := baseTime.Add(time.Duration(*resetAfterSeconds) * time.Second)
+		if !reset.After(now) {
+			return
+		}
+		if resetAt == nil || reset.After(*resetAt) {
+			resetAt = &reset
+		}
+	}
+
+	appendIfExceeded(normalized.Used5hPercent, normalized.Reset5hSeconds)
+	appendIfExceeded(normalized.Used7dPercent, normalized.Reset7dSeconds)
+	return resetAt
+}
+
+func getOpenAICodexQuotaGuardSettings(ctx context.Context, settingService *SettingService, accountID int64) *OpenAICodexQuotaGuardSettings {
+	if settingService == nil {
+		return DefaultOpenAICodexQuotaGuardSettings()
+	}
+
+	settings, err := settingService.GetOpenAICodexQuotaGuardSettings(ctx)
+	if err == nil && settings != nil {
+		return settings
+	}
+	slog.Warn("openai_codex_quota_guard_settings_read_failed", "account_id", accountID, "error", err)
+	return DefaultOpenAICodexQuotaGuardSettings()
+}
+
+func applyOpenAICodexQuotaGuard(ctx context.Context, accountRepo AccountRepository, accountID int64, snapshot *OpenAICodexUsageSnapshot, settings *OpenAICodexQuotaGuardSettings, now time.Time) bool {
+	if accountRepo == nil || accountID <= 0 || snapshot == nil {
+		return false
+	}
+	resetAt := calculateOpenAICodexQuotaGuardReset(snapshot, settings, now)
+	if resetAt == nil {
+		return false
+	}
+	if err := accountRepo.SetRateLimited(ctx, accountID, *resetAt); err != nil {
+		slog.Warn("openai_codex_quota_guard_set_rate_limited_failed", "account_id", accountID, "reset_at", *resetAt, "error", err)
+		return false
+	}
+
+	threshold := defaultOpenAICodexQuotaGuardThresholdPercent
+	if settings != nil {
+		threshold = normalizeOpenAICodexQuotaGuardThreshold(settings.ThresholdPercent)
+	}
+	slog.Info("openai_codex_quota_guard_rate_limited", "account_id", accountID, "threshold_percent", threshold, "reset_at", *resetAt)
+	return true
+}
+
 func buildCodexUsageExtraUpdates(snapshot *OpenAICodexUsageSnapshot, fallbackNow time.Time) map[string]any {
 	if snapshot == nil {
 		return nil
@@ -5675,6 +5760,8 @@ func (s *OpenAIGatewayService) updateCodexUsageSnapshot(ctx context.Context, acc
 		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.accountRepo.UpdateExtra(updateCtx, accountID, updates)
+		settings := getOpenAICodexQuotaGuardSettings(updateCtx, s.settingService, accountID)
+		applyOpenAICodexQuotaGuard(updateCtx, s.accountRepo, accountID, snapshot, settings, time.Now())
 	}()
 }
 

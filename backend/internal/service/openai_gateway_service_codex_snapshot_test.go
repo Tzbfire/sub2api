@@ -190,3 +190,71 @@ func TestBuildCodexUsageExtraUpdates_WithoutNormalizedWindowFields(t *testing.T)
 		t.Fatalf("did not expect codex_7d_reset_at in updates: %v", updates["codex_7d_reset_at"])
 	}
 }
+
+func TestCalculateOpenAICodexQuotaGuardReset_UsesLaterExceededWindow(t *testing.T) {
+	now := time.Date(2026, 2, 20, 9, 0, 0, 0, time.UTC)
+	primaryUsed := 91.0
+	primaryReset := 86400
+	primaryWindow := 10080
+	secondaryUsed := 95.0
+	secondaryReset := 3600
+	secondaryWindow := 300
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:         &primaryUsed,
+		PrimaryResetAfterSeconds:   &primaryReset,
+		PrimaryWindowMinutes:       &primaryWindow,
+		SecondaryUsedPercent:       &secondaryUsed,
+		SecondaryResetAfterSeconds: &secondaryReset,
+		SecondaryWindowMinutes:     &secondaryWindow,
+		UpdatedAt:                  now.Format(time.RFC3339),
+	}
+
+	resetAt := calculateOpenAICodexQuotaGuardReset(snapshot, &OpenAICodexQuotaGuardSettings{
+		Enabled: true, ThresholdPercent: 90,
+	}, now)
+	if resetAt == nil {
+		t.Fatal("expected resetAt")
+	}
+	want := now.Add(24 * time.Hour)
+	if !resetAt.Equal(want) {
+		t.Fatalf("resetAt = %v, want %v", *resetAt, want)
+	}
+}
+
+func TestCalculateOpenAICodexQuotaGuardReset_NoTriggerBelowThreshold(t *testing.T) {
+	now := time.Date(2026, 2, 20, 9, 0, 0, 0, time.UTC)
+	used := 89.9
+	reset := 3600
+	window := 300
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:       &used,
+		PrimaryResetAfterSeconds: &reset,
+		PrimaryWindowMinutes:     &window,
+		UpdatedAt:                now.Format(time.RFC3339),
+	}
+
+	if resetAt := calculateOpenAICodexQuotaGuardReset(snapshot, &OpenAICodexQuotaGuardSettings{
+		Enabled: true, ThresholdPercent: 90,
+	}, now); resetAt != nil {
+		t.Fatalf("expected nil resetAt, got %v", *resetAt)
+	}
+}
+
+func TestCalculateOpenAICodexQuotaGuardReset_DisabledSkips(t *testing.T) {
+	now := time.Date(2026, 2, 20, 9, 0, 0, 0, time.UTC)
+	used := 100.0
+	reset := 3600
+	window := 300
+	snapshot := &OpenAICodexUsageSnapshot{
+		PrimaryUsedPercent:       &used,
+		PrimaryResetAfterSeconds: &reset,
+		PrimaryWindowMinutes:     &window,
+		UpdatedAt:                now.Format(time.RFC3339),
+	}
+
+	if resetAt := calculateOpenAICodexQuotaGuardReset(snapshot, &OpenAICodexQuotaGuardSettings{
+		Enabled: false, ThresholdPercent: 90,
+	}, now); resetAt != nil {
+		t.Fatalf("expected nil resetAt, got %v", *resetAt)
+	}
+}

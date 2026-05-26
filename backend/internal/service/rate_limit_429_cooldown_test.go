@@ -111,3 +111,52 @@ func TestHandle429_FallbackUsesDefaultSecondsWhenSettingServiceMissing(t *testin
 	require.Equal(t, int64(44), accountRepo.lastRateLimitID)
 	require.True(t, !accountRepo.lastRateLimitReset.Before(before.Add(5*time.Second)) && !accountRepo.lastRateLimitReset.After(after.Add(5*time.Second)))
 }
+
+func TestGetOpenAICodexQuotaGuardSettings_DefaultsWhenNotSet(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := NewSettingService(repo, &config.Config{})
+
+	settings, err := svc.GetOpenAICodexQuotaGuardSettings(context.Background())
+	require.NoError(t, err)
+	require.True(t, settings.Enabled)
+	require.Equal(t, 90.0, settings.ThresholdPercent)
+}
+
+func TestGetOpenAICodexQuotaGuardSettings_ReadsFromDB(t *testing.T) {
+	repo := newMockSettingRepo()
+	data, _ := json.Marshal(OpenAICodexQuotaGuardSettings{Enabled: false, ThresholdPercent: 75})
+	repo.data[SettingKeyOpenAICodexQuotaGuardSettings] = string(data)
+	svc := NewSettingService(repo, &config.Config{})
+
+	settings, err := svc.GetOpenAICodexQuotaGuardSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, settings.Enabled)
+	require.Equal(t, 75.0, settings.ThresholdPercent)
+}
+
+func TestSetOpenAICodexQuotaGuardSettings_EnabledRejectsOutOfRange(t *testing.T) {
+	svc := NewSettingService(newMockSettingRepo(), &config.Config{})
+
+	for _, threshold := range []float64{0, -1, 100.1} {
+		err := svc.SetOpenAICodexQuotaGuardSettings(context.Background(), &OpenAICodexQuotaGuardSettings{
+			Enabled: true, ThresholdPercent: threshold,
+		})
+		require.Error(t, err, "should reject enabled=true + threshold_percent=%f", threshold)
+		require.Contains(t, err.Error(), "threshold_percent must be between 1-100")
+	}
+}
+
+func TestSetOpenAICodexQuotaGuardSettings_DisabledNormalizesOutOfRange(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.SetOpenAICodexQuotaGuardSettings(context.Background(), &OpenAICodexQuotaGuardSettings{
+		Enabled: false, ThresholdPercent: 0,
+	})
+	require.NoError(t, err)
+
+	settings, err := svc.GetOpenAICodexQuotaGuardSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, settings.Enabled)
+	require.Equal(t, 90.0, settings.ThresholdPercent)
+}

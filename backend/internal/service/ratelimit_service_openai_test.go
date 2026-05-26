@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -149,12 +150,16 @@ func TestCalculateOpenAI429ResetTime_ReversedWindowOrder(t *testing.T) {
 
 type openAI429SnapshotRepo struct {
 	mockAccountRepoForGemini
-	rateLimitedID int64
-	updatedExtra  map[string]any
+	rateLimitedID  int64
+	rateLimitedAt  time.Time
+	rateLimitCalls int
+	updatedExtra   map[string]any
 }
 
-func (r *openAI429SnapshotRepo) SetRateLimited(_ context.Context, id int64, _ time.Time) error {
+func (r *openAI429SnapshotRepo) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
 	r.rateLimitedID = id
+	r.rateLimitedAt = resetAt
+	r.rateLimitCalls++
 	return nil
 }
 
@@ -189,6 +194,37 @@ func TestHandle429_OpenAIPersistsCodexSnapshotImmediately(t *testing.T) {
 	}
 	if got := repo.updatedExtra["codex_7d_used_percent"]; got != 100.0 {
 		t.Fatalf("codex_7d_used_percent = %v, want 100", got)
+	}
+	if repo.rateLimitCalls < 1 {
+		t.Fatal("expected rate limit state to be set")
+	}
+}
+
+func TestPersistOpenAICodexSnapshot_QuotaGuardUsesConfiguredThreshold(t *testing.T) {
+	repo := &openAI429SnapshotRepo{}
+	settingRepo := newMockSettingRepo()
+	data, _ := json.Marshal(OpenAICodexQuotaGuardSettings{Enabled: true, ThresholdPercent: 95})
+	settingRepo.data[SettingKeyOpenAICodexQuotaGuardSettings] = string(data)
+	settingSvc := NewSettingService(settingRepo, nil)
+	svc := NewRateLimitService(repo, nil, nil, nil, nil)
+	svc.SetSettingService(settingSvc)
+	account := &Account{ID: 124, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	headers := http.Header{}
+	headers.Set("x-codex-primary-used-percent", "94")
+	headers.Set("x-codex-primary-reset-after-seconds", "604800")
+	headers.Set("x-codex-primary-window-minutes", "10080")
+	headers.Set("x-codex-secondary-used-percent", "22")
+	headers.Set("x-codex-secondary-reset-after-seconds", "18000")
+	headers.Set("x-codex-secondary-window-minutes", "300")
+
+	svc.persistOpenAICodexSnapshot(context.Background(), account, headers)
+
+	if repo.rateLimitCalls != 0 {
+		t.Fatalf("expected quota guard to skip below configured threshold, calls=%d", repo.rateLimitCalls)
+	}
+	if len(repo.updatedExtra) == 0 {
+		t.Fatal("expected codex snapshot to still be persisted")
 	}
 }
 

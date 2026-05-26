@@ -833,6 +833,30 @@ export async function updateRateLimit429CooldownSettings(
   return data;
 }
 
+// ==================== OpenAI Codex Quota Guard Settings ====================
+
+export interface OpenAICodexQuotaGuardSettings {
+  enabled: boolean;
+  threshold_percent: number;
+}
+
+export async function getOpenAICodexQuotaGuardSettings(): Promise<OpenAICodexQuotaGuardSettings> {
+  const { data } = await apiClient.get<OpenAICodexQuotaGuardSettings>(
+    "/admin/settings/openai-codex-quota-guard",
+  );
+  return data;
+}
+
+export async function updateOpenAICodexQuotaGuardSettings(
+  settings: OpenAICodexQuotaGuardSettings,
+): Promise<OpenAICodexQuotaGuardSettings> {
+  const { data } = await apiClient.put<OpenAICodexQuotaGuardSettings>(
+    "/admin/settings/openai-codex-quota-guard",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Stream Timeout Settings ====================
 
 /**
@@ -1054,6 +1078,8 @@ export const settingsAPI = {
   updateOverloadCooldownSettings,
   getRateLimit429CooldownSettings,
   updateRateLimit429CooldownSettings,
+  getOpenAICodexQuotaGuardSettings,
+  updateOpenAICodexQuotaGuardSettings,
   getStreamTimeoutSettings,
   updateStreamTimeoutSettings,
   getRectifierSettings,

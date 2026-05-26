@@ -2846,6 +2846,49 @@ func (s *SettingService) SetRateLimit429CooldownSettings(ctx context.Context, se
 	return s.settingRepo.Set(ctx, SettingKeyRateLimit429CooldownSettings, string(data))
 }
 
+// GetOpenAICodexQuotaGuardSettings 获取 OpenAI Codex 配额主动休眠配置
+func (s *SettingService) GetOpenAICodexQuotaGuardSettings(ctx context.Context) (*OpenAICodexQuotaGuardSettings, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAICodexQuotaGuardSettings)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return DefaultOpenAICodexQuotaGuardSettings(), nil
+		}
+		return nil, fmt.Errorf("get openai codex quota guard settings: %w", err)
+	}
+	if value == "" {
+		return DefaultOpenAICodexQuotaGuardSettings(), nil
+	}
+
+	var settings OpenAICodexQuotaGuardSettings
+	if err := json.Unmarshal([]byte(value), &settings); err != nil {
+		return DefaultOpenAICodexQuotaGuardSettings(), nil
+	}
+
+	settings.ThresholdPercent = normalizeOpenAICodexQuotaGuardThreshold(settings.ThresholdPercent)
+	return &settings, nil
+}
+
+// SetOpenAICodexQuotaGuardSettings 设置 OpenAI Codex 配额主动休眠配置
+func (s *SettingService) SetOpenAICodexQuotaGuardSettings(ctx context.Context, settings *OpenAICodexQuotaGuardSettings) error {
+	if settings == nil {
+		return fmt.Errorf("settings cannot be nil")
+	}
+
+	if !isValidOpenAICodexQuotaGuardThreshold(settings.ThresholdPercent) {
+		if settings.Enabled {
+			return fmt.Errorf("threshold_percent must be between 1-100")
+		}
+		settings.ThresholdPercent = defaultOpenAICodexQuotaGuardThresholdPercent
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("marshal openai codex quota guard settings: %w", err)
+	}
+
+	return s.settingRepo.Set(ctx, SettingKeyOpenAICodexQuotaGuardSettings, string(data))
+}
+
 // GetOIDCConnectOAuthConfig 返回用于登录的“最终生效” OIDC 配置。
 //
 // 优先级：
