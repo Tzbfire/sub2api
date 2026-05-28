@@ -151,6 +151,54 @@ func TestAccountIsModelSupported(t *testing.T) {
 			requestedModel: "any-model",
 			expected:       true,
 		},
+		{
+			name:     "openai free default supports gpt-5.5",
+			platform: PlatformOpenAI,
+			credentials: map[string]any{
+				"plan_type": "free",
+			},
+			requestedModel: "gpt-5.5",
+			expected:       true,
+		},
+		{
+			name:     "openai free default supports gpt-5.4-mini",
+			platform: PlatformOpenAI,
+			credentials: map[string]any{
+				"plan_type": "free",
+			},
+			requestedModel: "gpt-5.4-mini",
+			expected:       true,
+		},
+		{
+			name:     "openai free default rejects other gpt model",
+			platform: PlatformOpenAI,
+			credentials: map[string]any{
+				"plan_type": "free",
+			},
+			requestedModel: "gpt-5.4",
+			expected:       false,
+		},
+		{
+			name:     "openai plus without mapping still allows all",
+			platform: PlatformOpenAI,
+			credentials: map[string]any{
+				"plan_type": "plus",
+			},
+			requestedModel: "gpt-5.4",
+			expected:       true,
+		},
+		{
+			name:     "openai free explicit mapping overrides default",
+			platform: PlatformOpenAI,
+			credentials: map[string]any{
+				"plan_type": "free",
+				"model_mapping": map[string]any{
+					"gpt-5.4": "gpt-5.4",
+				},
+			},
+			requestedModel: "gpt-5.4",
+			expected:       true,
+		},
 
 		// 精确匹配
 		{
@@ -454,6 +502,64 @@ func TestAccountGetModelMapping_AntigravityRespectsWildcardOverride(t *testing.T
 	}
 	if mapped := account.GetMappedModel("gemini-3-flash"); mapped != "gemini-3.1-pro-high" {
 		t.Fatalf("expected wildcard mapping to stay effective, got: %q", mapped)
+	}
+}
+
+func TestAccountGetModelMapping_OpenAIFreeDefaults(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Credentials: map[string]any{
+			"plan_type": "free",
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	if len(mapping) != 2 {
+		t.Fatalf("expected two free default mappings, got: %v", mapping)
+	}
+	if mapping["gpt-5.5"] != "gpt-5.5" {
+		t.Fatalf("expected gpt-5.5 passthrough, got: %q", mapping["gpt-5.5"])
+	}
+	if mapping["gpt-5.4-mini"] != "gpt-5.4-mini" {
+		t.Fatalf("expected gpt-5.4-mini passthrough, got: %q", mapping["gpt-5.4-mini"])
+	}
+}
+
+func TestAccountGetModelMapping_OpenAIFreeDefaultsFromImagePlanFallback(t *testing.T) {
+	account := &Account{
+		Platform:    PlatformOpenAI,
+		Credentials: map[string]any{},
+		Extra: map[string]any{
+			"image_account_plan": "ChatGPT Free",
+		},
+	}
+
+	mapping := account.GetModelMapping()
+	if len(mapping) != 2 {
+		t.Fatalf("expected two free default mappings, got: %v", mapping)
+	}
+	if mapping["gpt-5.5"] != "gpt-5.5" || mapping["gpt-5.4-mini"] != "gpt-5.4-mini" {
+		t.Fatalf("unexpected free default mapping: %v", mapping)
+	}
+}
+
+func TestAccountGetModelMapping_OpenAIFreeCacheInvalidatesOnPlanChange(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Credentials: map[string]any{
+			"plan_type": "free",
+		},
+	}
+
+	first := account.GetModelMapping()
+	if len(first) != 2 {
+		t.Fatalf("expected free default mapping, got: %v", first)
+	}
+
+	account.Credentials["plan_type"] = "plus"
+	second := account.GetModelMapping()
+	if len(second) != 0 {
+		t.Fatalf("expected no default mapping after plan change, got: %v", second)
 	}
 }
 

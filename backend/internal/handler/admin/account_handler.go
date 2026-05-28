@@ -1891,7 +1891,7 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
-		if account.IsOpenAIPassthroughEnabled() {
+		if account.IsOpenAIPassthroughEnabled() && !account.IsOpenAIFreePlan() {
 			response.Success(c, openai.DefaultModels)
 			return
 		}

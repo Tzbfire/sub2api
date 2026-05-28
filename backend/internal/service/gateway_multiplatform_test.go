@@ -1163,6 +1163,51 @@ func TestGatewayService_isModelSupportedByAccount(t *testing.T) {
 			model:    "gemini-2.5-pro",
 			expected: true,
 		},
+		{
+			name: "OpenAI透传-Free账号仍限制非Free模型",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"plan_type": "free",
+				},
+				Extra: map[string]any{
+					"openai_passthrough": true,
+				},
+			},
+			model:    "gpt-5.4",
+			expected: false,
+		},
+		{
+			name: "OpenAI透传-Free账号支持Free模型",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"plan_type": "free",
+				},
+				Extra: map[string]any{
+					"openai_passthrough": true,
+				},
+			},
+			model:    "gpt-5.5",
+			expected: true,
+		},
+		{
+			name: "OpenAI透传-Plus账号仍允许所有模型",
+			account: &Account{
+				Platform: PlatformOpenAI,
+				Type:     AccountTypeOAuth,
+				Credentials: map[string]any{
+					"plan_type": "plus",
+				},
+				Extra: map[string]any{
+					"openai_passthrough": true,
+				},
+			},
+			model:    "gpt-5.4",
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {

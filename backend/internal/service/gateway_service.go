@@ -3720,8 +3720,8 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 		_, ok := ResolveBedrockModelID(account, requestedModel)
 		return ok
 	}
-	// OpenAI 透传模式：仅替换认证，允许所有模型
-	if account.Platform == PlatformOpenAI && account.IsOpenAIPassthroughEnabled() {
+	// OpenAI 透传模式：仅替换认证；Free 账号仍需遵守 Free 默认模型列表。
+	if account.Platform == PlatformOpenAI && account.IsOpenAIPassthroughEnabled() && !account.IsOpenAIFreePlan() {
 		return true
 	}
 	// OAuth/SetupToken 账号使用 Anthropic 标准映射（短ID → 长ID）

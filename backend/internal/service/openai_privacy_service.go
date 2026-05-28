@@ -207,14 +207,31 @@ func fillAccountInfo(info *ChatGPTAccountInfo, acct map[string]any) {
 
 // extractPlanType 从单个 account 对象中提取 plan_type
 func extractPlanType(acct map[string]any) string {
+	if planType := firstOpenAIPlanField(acct); planType != "" {
+		return planType
+	}
 	if account, ok := acct["account"].(map[string]any); ok {
-		if planType, ok := account["plan_type"].(string); ok && planType != "" {
+		if planType := firstOpenAIPlanField(account); planType != "" {
 			return planType
 		}
 	}
 	if entitlement, ok := acct["entitlement"].(map[string]any); ok {
-		if subPlan, ok := entitlement["subscription_plan"].(string); ok && subPlan != "" {
-			return subPlan
+		if planType := firstOpenAIPlanField(entitlement); planType != "" {
+			return planType
+		}
+	}
+	return ""
+}
+
+func firstOpenAIPlanField(fields map[string]any) string {
+	if fields == nil {
+		return ""
+	}
+	for _, key := range []string{"plan_type", "account_plan_type", "chatgpt_plan_type", "subscription_plan", "account_plan", "plan"} {
+		if raw, ok := fields[key].(string); ok {
+			if planType := normalizeOpenAIPlanType(raw); planType != "" {
+				return planType
+			}
 		}
 	}
 	return ""

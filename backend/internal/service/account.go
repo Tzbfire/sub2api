@@ -66,6 +66,7 @@ type Account struct {
 	modelMappingCacheRawPtr         uintptr
 	modelMappingCacheRawLen         int
 	modelMappingCacheRawSig         uint64
+	modelMappingCachePlanSig        uint64
 }
 
 type TempUnschedulableRule struct {
@@ -452,6 +453,46 @@ func stringMappingFromRaw(raw any) map[string]string {
 	}
 }
 
+var openAIFreeDefaultModelMapping = map[string]string{
+	"gpt-5.5":      "gpt-5.5",
+	"gpt-5.4-mini": "gpt-5.4-mini",
+}
+
+func cloneStringMap(mapping map[string]string) map[string]string {
+	if len(mapping) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(mapping))
+	for key, value := range mapping {
+		result[key] = value
+	}
+	return result
+}
+
+func (a *Account) IsOpenAIFreePlan() bool {
+	if a == nil || !a.IsOpenAI() {
+		return false
+	}
+	planType := normalizeOpenAIPlanType(a.GetCredential("plan_type"))
+	if planType == "" {
+		planType = normalizeOpenAIPlanType(a.GetExtraString("image_account_plan"))
+	}
+	return planType == "free"
+}
+
+func (a *Account) defaultModelMapping() map[string]string {
+	if a == nil {
+		return nil
+	}
+	if a.Platform == domain.PlatformAntigravity {
+		return domain.DefaultAntigravityModelMapping
+	}
+	if a.IsOpenAIFreePlan() {
+		return cloneStringMap(openAIFreeDefaultModelMapping)
+	}
+	return nil
+}
+
 func (a *Account) GetModelMapping() map[string]string {
 	credentialsPtr := mapPtr(a.Credentials)
 	rawMapping, _ := a.Credentials["model_mapping"].(map[string]any)
@@ -459,11 +500,13 @@ func (a *Account) GetModelMapping() map[string]string {
 	rawLen := len(rawMapping)
 	rawSig := uint64(0)
 	rawSigReady := false
+	planSig := a.modelMappingPlanSignature()
 
 	if a.modelMappingCacheReady &&
 		a.modelMappingCacheCredentialsPtr == credentialsPtr &&
 		a.modelMappingCacheRawPtr == rawPtr &&
-		a.modelMappingCacheRawLen == rawLen {
+		a.modelMappingCacheRawLen == rawLen &&
+		a.modelMappingCachePlanSig == planSig {
 		rawSig = modelMappingSignature(rawMapping)
 		rawSigReady = true
 		if a.modelMappingCacheRawSig == rawSig {
@@ -482,24 +525,17 @@ func (a *Account) GetModelMapping() map[string]string {
 	a.modelMappingCacheRawPtr = rawPtr
 	a.modelMappingCacheRawLen = rawLen
 	a.modelMappingCacheRawSig = rawSig
+	a.modelMappingCachePlanSig = planSig
 	return mapping
 }
 
 func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]string {
 	if a.Credentials == nil {
-		// Antigravity 平台使用默认映射
-		if a.Platform == domain.PlatformAntigravity {
-			return domain.DefaultAntigravityModelMapping
-		}
 		// Bedrock 默认映射由 forwardBedrock 统一处理（需配合 region prefix 调整）
-		return nil
+		return a.defaultModelMapping()
 	}
 	if len(rawMapping) == 0 {
-		// Antigravity 平台使用默认映射
-		if a.Platform == domain.PlatformAntigravity {
-			return domain.DefaultAntigravityModelMapping
-		}
-		return nil
+		return a.defaultModelMapping()
 	}
 
 	result := make(map[string]string)
@@ -520,10 +556,7 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 	}
 
 	// Antigravity 平台使用默认映射
-	if a.Platform == domain.PlatformAntigravity {
-		return domain.DefaultAntigravityModelMapping
-	}
-	return nil
+	return a.defaultModelMapping()
 }
 
 func mapPtr(m map[string]any) uintptr {
@@ -554,6 +587,17 @@ func modelMappingSignature(rawMapping map[string]any) uint64 {
 		}
 		_, _ = h.Write([]byte{0xff})
 	}
+	return h.Sum64()
+}
+
+func (a *Account) modelMappingPlanSignature() uint64 {
+	if a == nil || !a.IsOpenAI() {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(normalizeOpenAIPlanType(a.GetCredential("plan_type"))))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(normalizeOpenAIPlanType(a.GetExtraString("image_account_plan"))))
 	return h.Sum64()
 }
 

@@ -311,6 +311,7 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 				tokenInfo.ExpiresAt = expiresAt.Unix()
 				tokenInfo.ExpiresIn = int64(time.Until(*expiresAt).Seconds())
 			}
+			applyOpenAIAccountPlanFallback(tokenInfo, account)
 			return tokenInfo, nil
 		}
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_NO_REFRESH_TOKEN", "no refresh token available")
@@ -325,7 +326,52 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 	}
 
 	clientID := account.GetCredential("client_id")
-	return s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
+	tokenInfo, err := s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
+	if err != nil {
+		return nil, err
+	}
+	applyOpenAIAccountPlanFallback(tokenInfo, account)
+	return tokenInfo, nil
+}
+
+func applyOpenAIAccountPlanFallback(tokenInfo *OpenAITokenInfo, account *Account) {
+	if tokenInfo == nil || account == nil || strings.TrimSpace(tokenInfo.PlanType) != "" {
+		return
+	}
+	for _, planType := range []string{
+		account.GetCredential("plan_type"),
+		account.GetExtraString("image_account_plan"),
+		account.GetExtraString("account_plan_type"),
+		account.GetExtraString("chatgpt_plan_type"),
+		account.GetExtraString("plan_type"),
+	} {
+		if normalized := normalizeOpenAIPlanType(planType); normalized != "" {
+			tokenInfo.PlanType = normalized
+			return
+		}
+	}
+}
+
+func normalizeOpenAIPlanType(planType string) string {
+	normalized := strings.ToLower(strings.TrimSpace(planType))
+	switch {
+	case normalized == "":
+		return ""
+	case strings.Contains(normalized, "enterprise"):
+		return "enterprise"
+	case strings.Contains(normalized, "business"):
+		return "business"
+	case strings.Contains(normalized, "team"):
+		return "team"
+	case strings.Contains(normalized, "chatgptpro"), strings.Contains(normalized, "pro"):
+		return "pro"
+	case strings.Contains(normalized, "plus"):
+		return "plus"
+	case strings.Contains(normalized, "free"):
+		return "free"
+	default:
+		return normalized
+	}
 }
 
 // BuildAccountCredentials builds credentials map from token info
