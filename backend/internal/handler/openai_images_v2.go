@@ -678,7 +678,8 @@ func classifyDispatchError(err error) (int, string, string) {
 }
 
 // listOpenAIImageAccounts 是 ImagePool.List 的实现：拉取 OpenAI 平台 / 指定分组下
-// 全部可调度账号，按 PoolAccount 投影返回。
+// 的图片候选账号，按 PoolAccount 投影返回。不要复用 ListSchedulable* 查询；
+// 普通 rate_limit_reset_at 属于文本通道限流，图片池只在 Pool 层读取 image_* 状态。
 func listOpenAIImageAccounts(
 	ctx context.Context,
 	repo service.AccountRepository,
@@ -689,17 +690,21 @@ func listOpenAIImageAccounts(
 		err      error
 	)
 	if f.GroupID > 0 {
-		accounts, err = repo.ListSchedulableByGroupIDAndPlatform(ctx, f.GroupID, service.PlatformOpenAI)
+		accounts, err = repo.ListByGroup(ctx, f.GroupID)
 	} else {
-		accounts, err = repo.ListSchedulableByPlatform(ctx, service.PlatformOpenAI)
+		accounts, err = repo.ListByPlatform(ctx, service.PlatformOpenAI)
 	}
 	if err != nil {
 		return nil, err
 	}
 
+	now := time.Now()
 	out := make([]openaiimages.PoolAccount, 0, len(accounts))
 	for i := range accounts {
 		a := &accounts[i]
+		if !isOpenAIImageAccountCandidate(a, now) {
+			continue
+		}
 		if !filterByDriver(a, f.Driver) {
 			continue
 		}
@@ -716,6 +721,22 @@ func listOpenAIImageAccounts(
 		})
 	}
 	return out, nil
+}
+
+func isOpenAIImageAccountCandidate(a *service.Account, now time.Time) bool {
+	if a == nil || a.Platform != service.PlatformOpenAI || a.Status != service.StatusActive || !a.Schedulable {
+		return false
+	}
+	if a.AutoPauseOnExpired && a.ExpiresAt != nil && !now.Before(*a.ExpiresAt) {
+		return false
+	}
+	if a.OverloadUntil != nil && now.Before(*a.OverloadUntil) {
+		return false
+	}
+	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
+		return false
+	}
+	return true
 }
 
 // filterByDriver 按 driver 类型过滤账号。
