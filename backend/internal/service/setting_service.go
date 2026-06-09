@@ -1195,6 +1195,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyCustomEndpoints] = settings.CustomEndpoints
 	updates[SettingKeyImageCacheBaseURL] = strings.TrimSpace(settings.ImageCacheBaseURL)
 	updates[SettingKeyDefaultImageResponseFormat] = normalizeDefaultImageResponseFormatValue(settings.DefaultImageResponseFormat)
+	updates[SettingKeyImageCacheRetentionHours] = strconv.Itoa(normalizeImageCacheRetentionHours(settings.ImageCacheRetentionHours))
 
 	// 默认配置
 	updates[SettingKeyDefaultConcurrency] = strconv.Itoa(settings.DefaultConcurrency)
@@ -1943,6 +1944,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// OpenAI 图片网关
 		SettingKeyImageCacheBaseURL:          "",
 		SettingKeyDefaultImageResponseFormat: "auto",
+		SettingKeyImageCacheRetentionHours:   "24",
 	}
 
 	return s.settingRepo.SetMultiple(ctx, defaults)
@@ -1983,6 +1985,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
 		ImageCacheBaseURL:                strings.TrimSpace(settings[SettingKeyImageCacheBaseURL]),
 		DefaultImageResponseFormat:       normalizeDefaultImageResponseFormatValue(settings[SettingKeyDefaultImageResponseFormat]),
+		ImageCacheRetentionHours:         parseImageCacheRetentionHours(settings[SettingKeyImageCacheRetentionHours]),
 		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
 	}
 	result.TableDefaultPageSize, result.TablePageSizeOptions = parseTablePreferences(
@@ -3805,4 +3808,33 @@ func normalizeDefaultImageResponseFormatValue(v string) string {
 	default:
 		return "auto"
 	}
+}
+
+// parseImageCacheRetentionHours 解析图片短链本地缓存保留时间。
+//
+// 约定：
+//   - 0 表示永久保留（不做 TTL 删除）；
+//   - 空值/非法值回落到默认 24 小时；
+//   - 为避免误填极大值导致时间溢出，正数上限裁剪为 10 年。
+func parseImageCacheRetentionHours(v string) int {
+	raw := strings.TrimSpace(v)
+	if raw == "" {
+		return 24
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 24
+	}
+	return normalizeImageCacheRetentionHours(n)
+}
+
+func normalizeImageCacheRetentionHours(n int) int {
+	if n < 0 {
+		return 24
+	}
+	const maxHours = 10 * 365 * 24
+	if n > maxHours {
+		return maxHours
+	}
+	return n
 }

@@ -107,6 +107,7 @@ type SystemSettings struct {
 	// OpenAI 图片网关
 	ImageCacheBaseURL          string // response_format=url 时签发短链使用的 base URL
 	DefaultImageResponseFormat string // auto / b64_json / url / markdown
+	ImageCacheRetentionHours   int    // 图片短链本地缓存保留小时数；0 表示永久保留
 
 	DefaultConcurrency           int
 	DefaultBalance               float64

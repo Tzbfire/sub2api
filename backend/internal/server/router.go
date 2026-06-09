@@ -48,7 +48,20 @@ func SetupRouter(
 		}
 		cachedFrameOrigins.Store(&origins)
 	}
+	refreshImageCacheTTL := func() {
+		if handlers == nil || handlers.OpenAIImagesV2 == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), frameSrcRefreshTimeout)
+		defer cancel()
+		handlers.OpenAIImagesV2.RefreshImageCacheTTL(ctx)
+	}
+	refreshSettingsDependents := func() {
+		refreshFrameOrigins()
+		refreshImageCacheTTL()
+	}
 	refreshFrameOrigins() // 启动时初始化
+	refreshImageCacheTTL()
 
 	// 应用中间件
 	r.Use(middleware2.RequestLogger())
@@ -67,17 +80,17 @@ func SetupRouter(
 		if err != nil {
 			log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
 			r.Use(web.ServeEmbeddedFrontend())
-			settingService.SetOnUpdateCallback(refreshFrameOrigins)
+			settingService.SetOnUpdateCallback(refreshSettingsDependents)
 		} else {
-			// Register combined callback: invalidate HTML cache + refresh frame origins
+			// Register combined callback: invalidate HTML cache + refresh setting-backed runtime state
 			settingService.SetOnUpdateCallback(func() {
 				frontendServer.InvalidateCache()
-				refreshFrameOrigins()
+				refreshSettingsDependents()
 			})
 			r.Use(frontendServer.Middleware())
 		}
 	} else {
-		settingService.SetOnUpdateCallback(refreshFrameOrigins)
+		settingService.SetOnUpdateCallback(refreshSettingsDependents)
 	}
 
 	// 注册路由

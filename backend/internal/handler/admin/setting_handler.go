@@ -185,6 +185,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		CustomEndpoints:                        dto.ParseCustomEndpoints(settings.CustomEndpoints),
 		ImageCacheBaseURL:                      settings.ImageCacheBaseURL,
 		DefaultImageResponseFormat:             settings.DefaultImageResponseFormat,
+		ImageCacheRetentionHours:               settings.ImageCacheRetentionHours,
 		DefaultConcurrency:                     settings.DefaultConcurrency,
 		DefaultBalance:                         settings.DefaultBalance,
 		AffiliateRebateRate:                    settings.AffiliateRebateRate,
@@ -389,6 +390,7 @@ type UpdateSettingsRequest struct {
 	// OpenAI 图片网关
 	ImageCacheBaseURL          *string `json:"image_cache_base_url"`
 	DefaultImageResponseFormat *string `json:"default_image_response_format"`
+	ImageCacheRetentionHours   *int    `json:"image_cache_retention_hours"`
 
 	// 默认配置
 	DefaultConcurrency                       int                               `json:"default_concurrency"`
@@ -1222,6 +1224,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CustomEndpoints:                  customEndpointsJSON,
 		ImageCacheBaseURL:                resolveOptionalStr(req.ImageCacheBaseURL, previousSettings.ImageCacheBaseURL),
 		DefaultImageResponseFormat:       normalizeDefaultImageResponseFormat(resolveOptionalStr(req.DefaultImageResponseFormat, previousSettings.DefaultImageResponseFormat)),
+		ImageCacheRetentionHours:         resolveOptionalNonNegativeInt(req.ImageCacheRetentionHours, previousSettings.ImageCacheRetentionHours),
 		DefaultConcurrency:               req.DefaultConcurrency,
 		DefaultBalance:                   req.DefaultBalance,
 		AffiliateRebateRate:              affiliateRebateRate,
@@ -1562,6 +1565,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CustomEndpoints:                        dto.ParseCustomEndpoints(updatedSettings.CustomEndpoints),
 		ImageCacheBaseURL:                      updatedSettings.ImageCacheBaseURL,
 		DefaultImageResponseFormat:             updatedSettings.DefaultImageResponseFormat,
+		ImageCacheRetentionHours:               updatedSettings.ImageCacheRetentionHours,
 		DefaultConcurrency:                     updatedSettings.DefaultConcurrency,
 		DefaultBalance:                         updatedSettings.DefaultBalance,
 		AffiliateRebateRate:                    updatedSettings.AffiliateRebateRate,
@@ -1964,6 +1968,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.DefaultImageResponseFormat != after.DefaultImageResponseFormat {
 		changed = append(changed, "default_image_response_format")
+	}
+	if before.ImageCacheRetentionHours != after.ImageCacheRetentionHours {
+		changed = append(changed, "image_cache_retention_hours")
 	}
 	if before.EnableFingerprintUnification != after.EnableFingerprintUnification {
 		changed = append(changed, "enable_fingerprint_unification")
@@ -2879,6 +2886,16 @@ func resolveOptionalStr(p *string, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(*p)
+}
+
+func resolveOptionalNonNegativeInt(p *int, fallback int) int {
+	if p == nil {
+		return fallback
+	}
+	if *p < 0 {
+		return fallback
+	}
+	return *p
 }
 
 // normalizeDefaultImageResponseFormat 把外部输入收敛到合法集合。

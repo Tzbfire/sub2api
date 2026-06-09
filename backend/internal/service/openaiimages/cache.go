@@ -17,8 +17,8 @@ import (
 // 设计目标：
 //   - 用户请求 response_format=url 时，对 WebDriver / ResponsesToolDriver 路径
 //     （上游不直接返回可用 url）也能返回 url 形式；
-//   - 重启后仍可访问（落盘），TTL 24h；
-//   - 后台 goroutine 定期 GC 过期文件；
+//   - 重启后仍可访问（落盘），TTL 默认 24h；ttl < 0 表示永久保留；
+//   - TTL 模式后台 goroutine 定期 GC 过期文件；永久保留模式不做过期删除；
 //   - 内存索引用于 O(1) 查找 mime/exp，不存字节。
 type ImageCache struct {
 	dir string
@@ -36,14 +36,13 @@ type cacheEntry struct {
 	expires time.Time
 }
 
-// NewImageCache 创建并启动一个 cache。dir 为空使用 ./data/image_cache。ttl<=0 使用 24h。
+// NewImageCache 创建并启动一个 cache。dir 为空使用 ./data/image_cache。
+// ttl==0 使用 24h；ttl<0 表示永久保留。
 func NewImageCache(dir string, ttl time.Duration) (*ImageCache, error) {
 	if dir == "" {
 		dir = filepath.Join(".", "data", "image_cache")
 	}
-	if ttl <= 0 {
-		ttl = 24 * time.Hour
-	}
+	ttl = normalizeCacheTTL(ttl)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create image cache dir: %w", err)
 	}
@@ -63,6 +62,50 @@ func (c *ImageCache) Close() {
 	c.stopOnce.Do(func() { close(c.stopCh) })
 }
 
+// SetTTL 更新缓存保留策略，并把当前内存索引同步到新的策略。
+// ttl==0 使用默认 24h；ttl<0 表示永久保留。
+func (c *ImageCache) SetTTL(ttl time.Duration) {
+	if c == nil {
+		return
+	}
+	ttl = normalizeCacheTTL(ttl)
+	c.mu.RLock()
+	current := c.ttl
+	c.mu.RUnlock()
+	if current == ttl {
+		return
+	}
+	now := time.Now()
+	type victim struct{ id, mime string }
+	var victims []victim
+	c.mu.Lock()
+	c.ttl = ttl
+	for id, e := range c.entries {
+		if ttl < 0 {
+			e.expires = time.Time{}
+			continue
+		}
+		info, err := os.Stat(c.fileFor(id, e.mime))
+		if err != nil {
+			victims = append(victims, victim{id, e.mime})
+			continue
+		}
+		exp := info.ModTime().Add(ttl)
+		if now.After(exp) {
+			victims = append(victims, victim{id, e.mime})
+			continue
+		}
+		e.expires = exp
+	}
+	for _, v := range victims {
+		delete(c.entries, v.id)
+	}
+	c.mu.Unlock()
+	for _, v := range victims {
+		_ = os.Remove(c.fileFor(v.id, v.mime))
+	}
+}
+
 // Put 写入字节并返回随机 id。mime 用于决定扩展名与读取时回放。
 func (c *ImageCache) Put(data []byte, mime string) (string, error) {
 	if len(data) == 0 {
@@ -80,7 +123,12 @@ func (c *ImageCache) Put(data []byte, mime string) (string, error) {
 		return "", fmt.Errorf("write cache file: %w", err)
 	}
 	c.mu.Lock()
-	c.entries[id] = &cacheEntry{mime: mime, expires: time.Now().Add(c.ttl)}
+	ttl := c.ttl
+	expires := time.Time{}
+	if ttl > 0 {
+		expires = time.Now().Add(ttl)
+	}
+	c.entries[id] = &cacheEntry{mime: mime, expires: expires}
 	c.mu.Unlock()
 	return id, nil
 }
@@ -92,19 +140,25 @@ func (c *ImageCache) Put(data []byte, mime string) (string, error) {
 func (c *ImageCache) Get(id string) ([]byte, string, bool) {
 	c.mu.RLock()
 	e, ok := c.entries[id]
+	var mime string
+	var expires time.Time
+	if ok {
+		mime = e.mime
+		expires = e.expires
+	}
 	c.mu.RUnlock()
 	if !ok {
 		return nil, "", false
 	}
-	if time.Now().After(e.expires) {
-		c.deleteEntry(id, e.mime)
+	if !expires.IsZero() && time.Now().After(expires) {
+		c.deleteEntry(id, mime)
 		return nil, "", false
 	}
-	data, err := os.ReadFile(c.fileFor(id, e.mime))
+	data, err := os.ReadFile(c.fileFor(id, mime))
 	if err != nil {
 		return nil, "", false
 	}
-	return data, e.mime, true
+	return data, mime, true
 }
 
 // OpenForServe 打开 cache 文件用于流式响应（http.ServeContent）。
@@ -112,15 +166,20 @@ func (c *ImageCache) Get(id string) ([]byte, string, bool) {
 func (c *ImageCache) OpenForServe(id string) (f *os.File, mime string, modTime time.Time, ok bool) {
 	c.mu.RLock()
 	e, exists := c.entries[id]
+	var expires time.Time
+	if exists {
+		mime = e.mime
+		expires = e.expires
+	}
 	c.mu.RUnlock()
 	if !exists {
 		return nil, "", time.Time{}, false
 	}
-	if time.Now().After(e.expires) {
-		c.deleteEntry(id, e.mime)
+	if !expires.IsZero() && time.Now().After(expires) {
+		c.deleteEntry(id, mime)
 		return nil, "", time.Time{}, false
 	}
-	path := c.fileFor(id, e.mime)
+	path := c.fileFor(id, mime)
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, "", time.Time{}, false
@@ -130,7 +189,7 @@ func (c *ImageCache) OpenForServe(id string) (f *os.File, mime string, modTime t
 		_ = file.Close()
 		return nil, "", time.Time{}, false
 	}
-	return file, e.mime, stat.ModTime(), true
+	return file, mime, stat.ModTime(), true
 }
 
 func (c *ImageCache) fileFor(id, mime string) string {
@@ -163,7 +222,7 @@ func (c *ImageCache) gcOnce() {
 	var victims []victim
 	c.mu.RLock()
 	for id, e := range c.entries {
-		if now.After(e.expires) {
+		if !e.expires.IsZero() && now.After(e.expires) {
 			victims = append(victims, victim{id, e.mime})
 		}
 	}
@@ -194,10 +253,13 @@ func (c *ImageCache) scanExisting() {
 		if err != nil {
 			continue
 		}
-		exp := info.ModTime().Add(c.ttl)
-		if now.After(exp) {
-			_ = os.Remove(filepath.Join(c.dir, name))
-			continue
+		exp := time.Time{}
+		if c.ttl > 0 {
+			exp = info.ModTime().Add(c.ttl)
+			if now.After(exp) {
+				_ = os.Remove(filepath.Join(c.dir, name))
+				continue
+			}
 		}
 		c.entries[id] = &cacheEntry{mime: mimeForExt(ext), expires: exp}
 	}
@@ -235,4 +297,11 @@ func mimeForExt(ext string) string {
 	default:
 		return "image/png"
 	}
+}
+
+func normalizeCacheTTL(ttl time.Duration) time.Duration {
+	if ttl == 0 {
+		return 24 * time.Hour
+	}
+	return ttl
 }

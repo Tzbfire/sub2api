@@ -5236,6 +5236,8 @@ export default {
         cacheBaseURLHint: '当 response_format=url 时，签发的短链将使用该 URL 作为前缀（如 https://gateway.example.com）。留空则按请求头自动推断。',
         defaultResponseFormat: '默认图片返回方式',
         defaultResponseFormatHint: '客户端未显式传 response_format 时使用该默认值。auto = 保留入口默认（images/* 走 b64_json，chat/responses 走 markdown）。',
+        cacheRetentionHours: '图片缓存保留时间（小时）',
+        cacheRetentionHoursHint: '用于 response_format=url 的本地图片短链缓存。默认 24 小时；填 0 表示永久保留，不自动删除。',
         formatAuto: '自动（按入口默认）'
       },
       scheduling: {

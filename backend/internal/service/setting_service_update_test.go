@@ -224,6 +224,23 @@ func TestSettingService_UpdateSettings_TablePreferences(t *testing.T) {
 	require.Equal(t, "[20,100]", repo.updates[SettingKeyTablePageSizeOptions])
 }
 
+func TestSettingService_UpdateSettings_ImageCacheRetentionHours(t *testing.T) {
+	repo := &settingUpdateRepoStub{}
+	svc := NewSettingService(repo, &config.Config{})
+
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{
+		ImageCacheRetentionHours: 0,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "0", repo.updates[SettingKeyImageCacheRetentionHours])
+
+	err = svc.UpdateSettings(context.Background(), &SystemSettings{
+		ImageCacheRetentionHours: -1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "24", repo.updates[SettingKeyImageCacheRetentionHours])
+}
+
 func TestSettingService_UpdateSettings_PaymentVisibleMethodsAndAdvancedScheduler(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})

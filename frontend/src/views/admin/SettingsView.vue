@@ -3212,6 +3212,23 @@
                   }}
                 </p>
               </div>
+              <div>
+                <label
+                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.imageGateway.cacheRetentionHours") }}
+                </label>
+                <input
+                  v-model.number="form.image_cache_retention_hours"
+                  type="number"
+                  min="0"
+                  step="1"
+                  class="input max-w-xs"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.imageGateway.cacheRetentionHoursHint") }}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -6039,6 +6056,7 @@ const form = reactive<SettingsForm>({
   }>,
   image_cache_base_url: "",
   default_image_response_format: "auto",
+  image_cache_retention_hours: 24,
   frontend_url: "",
   smtp_host: "",
   smtp_port: 587,
@@ -6633,6 +6651,14 @@ function parseTablePageSizeOptionsInput(raw: string): number[] | null {
   return deduped;
 }
 
+function normalizeImageCacheRetentionHours(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 24;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 24;
+  return Math.max(0, Math.floor(parsed));
+}
+
 async function loadSettings() {
   loading.value = true;
   loadFailed.value = false;
@@ -6959,6 +6985,9 @@ async function saveSettings() {
       custom_endpoints: form.custom_endpoints,
       image_cache_base_url: form.image_cache_base_url,
       default_image_response_format: form.default_image_response_format,
+      image_cache_retention_hours: normalizeImageCacheRetentionHours(
+        form.image_cache_retention_hours,
+      ),
       frontend_url: form.frontend_url,
       smtp_host: form.smtp_host,
       smtp_port: form.smtp_port,

@@ -201,6 +201,7 @@ const (
 	// OpenAI 图片网关设置
 	SettingKeyImageCacheBaseURL          = "image_cache_base_url"          // response_format=url 时签发短链使用的 base URL（如 https://api.example.com）
 	SettingKeyDefaultImageResponseFormat = "default_image_response_format" // 客户端未指定 response_format 时使用的默认值（auto/b64_json/url/markdown）
+	SettingKeyImageCacheRetentionHours   = "image_cache_retention_hours"   // 图片短链本地缓存保留小时数；0 表示永久保留
 
 	// 默认配置
 	SettingKeyDefaultConcurrency   = "default_concurrency"    // 新用户默认并发量

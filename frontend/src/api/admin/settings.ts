@@ -352,6 +352,7 @@ export interface SystemSettings {
   custom_endpoints: CustomEndpoint[];
   image_cache_base_url: string;
   default_image_response_format: string;
+  image_cache_retention_hours: number;
   // SMTP settings
   smtp_host: string;
   smtp_port: number;
@@ -545,6 +546,7 @@ export interface UpdateSettingsRequest {
   custom_endpoints?: CustomEndpoint[];
   image_cache_base_url?: string;
   default_image_response_format?: string;
+  image_cache_retention_hours?: number;
   smtp_host?: string;
   smtp_port?: number;
   smtp_username?: string;
