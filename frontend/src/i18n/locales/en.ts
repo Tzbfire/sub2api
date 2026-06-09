@@ -5077,6 +5077,8 @@ export default {
         cacheBaseURLHint: 'When response_format=url, signed short URLs use this base (e.g. https://gateway.example.com). Leave empty to infer from request headers.',
         defaultResponseFormat: 'Default Image Response Format',
         defaultResponseFormatHint: 'Used when the client does not specify response_format. auto = keep entry-point default (images/* → b64_json, chat/responses → markdown).',
+        cacheRetentionHours: 'Image Cache Retention (hours)',
+        cacheRetentionHoursHint: 'Local cache retention for response_format=url image links. Default is 24 hours; set 0 to keep forever and disable automatic deletion.',
         formatAuto: 'Auto (entry-point default)'
       },
       scheduling: {

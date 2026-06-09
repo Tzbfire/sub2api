@@ -109,6 +109,7 @@ type SystemSettings struct {
 	// OpenAI 图片网关
 	ImageCacheBaseURL          string `json:"image_cache_base_url"`
 	DefaultImageResponseFormat string `json:"default_image_response_format"`
+	ImageCacheRetentionHours   int    `json:"image_cache_retention_hours"`
 
 	DefaultConcurrency           int                          `json:"default_concurrency"`
 	DefaultBalance               float64                      `json:"default_balance"`

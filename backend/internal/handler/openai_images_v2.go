@@ -120,7 +120,10 @@ func NewOpenAIImagesV2Handler(
 		},
 	}
 
-	if cache, cacheErr := openaiimages.NewImageCache(filepath.Join(settingService.PricingDataDir(), "image_cache"), 24*time.Hour); cacheErr == nil {
+	if cache, cacheErr := openaiimages.NewImageCache(
+		filepath.Join(settingService.PricingDataDir(), "image_cache"),
+		imageCacheTTLFromSettings(context.Background(), settingService),
+	); cacheErr == nil {
 		h.cache = cache
 	} else {
 		logger.L().Warn("openaiimages.image_cache_init_failed", zap.Error(cacheErr))
@@ -800,6 +803,7 @@ func (h *OpenAIImagesV2Handler) materializeAsURLs(c *gin.Context, res *openaiima
 	if h.cache == nil || res == nil {
 		return
 	}
+	h.RefreshImageCacheTTL(c.Request.Context())
 	base := h.publicBaseURL(c)
 	for i := range res.Items {
 		it := &res.Items[i]
@@ -836,7 +840,7 @@ func (h *OpenAIImagesV2Handler) materializeAsURLs(c *gin.Context, res *openaiima
 }
 
 // ServeCachedFile 处理 GET /v1/files/cached/:id，返回原始字节。
-// 公开访问（id 不可猜，且 24h 后 GC）。
+// 公开访问（id 不可猜，按图片缓存保留时间 GC；0 表示永久保留）。
 // 默认放行所有跨域来源，方便前端 <img>/fetch 直接拉取。
 func (h *OpenAIImagesV2Handler) ServeCachedFile(c *gin.Context) {
 	// 公开图片资源：允许任意来源跨域读取。
@@ -854,6 +858,7 @@ func (h *OpenAIImagesV2Handler) ServeCachedFile(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
+	h.RefreshImageCacheTTL(c.Request.Context())
 	raw := c.Param("id")
 	id := raw
 	if dot := strings.IndexByte(raw, '.'); dot > 0 {
@@ -932,6 +937,29 @@ func extForMimePublic(mime string) string {
 	default:
 		return ".png"
 	}
+}
+
+func (h *OpenAIImagesV2Handler) RefreshImageCacheTTL(ctx context.Context) {
+	if h == nil || h.cache == nil {
+		return
+	}
+	h.cache.SetTTL(imageCacheTTLFromSettings(ctx, h.settings))
+}
+
+func imageCacheTTLFromSettings(ctx context.Context, settingService *service.SettingService) time.Duration {
+	hours := 24
+	if settingService != nil {
+		if cfg, err := settingService.GetAllSettings(ctx); err == nil && cfg != nil {
+			hours = cfg.ImageCacheRetentionHours
+		}
+	}
+	if hours == 0 {
+		return -1
+	}
+	if hours < 0 {
+		hours = 24
+	}
+	return time.Duration(hours) * time.Hour
 }
 
 // currentLimiterConfig 返回当前生效的图片网关运行时配置（带 5s 缓存）。

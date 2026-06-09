@@ -68,6 +68,50 @@ func TestImageCacheScanExisting(t *testing.T) {
 	}
 }
 
+func TestImageCachePermanentRetention(t *testing.T) {
+	dir := t.TempDir()
+	c, err := NewImageCache(dir, -1)
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	defer c.Close()
+	id, err := c.Put([]byte("persist"), "image/png")
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	// 即使主动跑 GC，永久保留模式也不应删除。
+	c.gcOnce()
+	data, mime, ok := c.Get(id)
+	if !ok || string(data) != "persist" || mime != "image/png" {
+		t.Fatalf("permanent get: ok=%v mime=%q data=%q", ok, mime, string(data))
+	}
+}
+
+func TestImageCacheSetTTLExpiresExistingByModTime(t *testing.T) {
+	dir := t.TempDir()
+	c, err := NewImageCache(dir, -1)
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	defer c.Close()
+	id, err := c.Put([]byte("old"), "image/png")
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	path := filepath.Join(dir, id+".png")
+	oldTime := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	c.SetTTL(time.Hour)
+	if _, _, ok := c.Get(id); ok {
+		t.Fatal("expected existing old file to expire after TTL update")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected file removed, stat err=%v", err)
+	}
+}
+
 func TestImageCachePutEmpty(t *testing.T) {
 	dir := t.TempDir()
 	c, _ := NewImageCache(dir, time.Hour)
