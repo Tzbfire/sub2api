@@ -16,9 +16,8 @@ const (
 	filesURL               = "https://chatgpt.com/backend-api/files"
 	defaultSentinelSDKURL  = "https://chatgpt.com/backend-api/sentinel/sdk.js"
 
-	requirementsTokenDifficulty = "0fffff"
-	defaultUserAgent            = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
-	maxImageDownloadBytes       = 20 << 20
+	defaultUserAgent      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+	maxImageDownloadBytes = 20 << 20
 
 	lifecycleTimeout = 5 * time.Minute
 	pollDeadline     = 4 * time.Minute

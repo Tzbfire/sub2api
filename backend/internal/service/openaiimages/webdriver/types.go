@@ -75,8 +75,9 @@ type uploadedFile struct {
 
 // chatRequirements 镜像 sentinel/chat-requirements 响应。
 type chatRequirements struct {
-	Token     string `json:"token"`
-	Turnstile struct {
+	Token      string `json:"token"`
+	ProofToken string `json:"proof_token,omitempty"`
+	Turnstile  struct {
 		Required bool `json:"required"`
 	} `json:"turnstile"`
 	Arkose struct {

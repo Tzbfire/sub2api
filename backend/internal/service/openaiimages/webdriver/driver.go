@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,9 +75,13 @@ func (d *Driver) Forward(ctx context.Context, in *Request) (*Result, error) {
 	}
 
 	ua := headers.Get("User-Agent")
-	proofToken, err := buildProofToken(reqs.ProofOfWork.Required, reqs.ProofOfWork.Seed, reqs.ProofOfWork.Difficulty, ua, scriptSources, dataBuild)
-	if err != nil {
-		return nil, &ProtocolError{Reason: err.Error()}
+	proofToken := strings.TrimSpace(reqs.ProofToken)
+	if proofToken == "" {
+		var err error
+		proofToken, err = buildProofToken(reqs.ProofOfWork.Required, reqs.ProofOfWork.Seed, reqs.ProofOfWork.Difficulty, ua, scriptSources, dataBuild)
+		if err != nil {
+			return nil, &ProtocolError{Reason: err.Error()}
+		}
 	}
 
 	parentMessageID := uuid.NewString()

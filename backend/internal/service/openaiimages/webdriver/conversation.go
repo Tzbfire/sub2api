@@ -181,10 +181,17 @@ var pointerRe = regexp.MustCompile(`(?:file-service|sediment)://[^"\s\]]+`)
 // modelSlug 把 OpenAI 模型名映射到 ChatGPT Web 内部 slug。
 func modelSlug(model string) string {
 	m := strings.ToLower(strings.TrimSpace(model))
-	if strings.Contains(m, "gpt-image-2") || strings.Contains(m, "gpt-5-3") {
-		return "gpt-5-3"
+	for _, prefix := range []string{"plus-", "team-", "pro-"} {
+		m = strings.TrimPrefix(m, prefix)
 	}
-	return "auto"
+	switch {
+	case m == "codex-gpt-image-2":
+		return "codex-gpt-image-2"
+	case m == "gpt-image-2" || strings.Contains(m, "gpt-5-3"):
+		return "gpt-5-3"
+	default:
+		return "auto"
+	}
 }
 
 // improviseHint 在用户 prompt 末尾追加的"软指令"，用于关掉模型的澄清反射
@@ -570,25 +577,39 @@ func collectToolPointers(body []byte, excluded map[string]struct{}) []pointerInf
 	return collectPointers(body, excluded)
 }
 
-// collectToolPointersFromMapping 从 conversation mapping 里只挑 author.role == "tool"
-// 的消息中的 file-service:// / sediment:// 指针。返回 (pointers, mappingFound)。
+// collectToolPointersFromMapping 从 conversation mapping 中提取 ChatGPT image_gen 结果。
+//
+// 旧协议通常把图片 pointer 放在 author.role=="tool" 的消息里；basketikun/chatgpt2api
+// 最新实现还兼容 author.role=="assistant" 且 metadata.async_task_type=="image_gen"
+// 或 content/metadata 中带 image_asset_pointer 的消息。返回 (pointers, mappingFound)。
 func collectToolPointersFromMapping(body []byte, excluded map[string]struct{}) ([]pointerInfo, bool) {
 	mapping := gjson.GetBytes(body, "mapping")
 	if !mapping.Exists() || !mapping.IsObject() {
 		return nil, false
 	}
+	type record struct {
+		time    float64
+		pointer string
+	}
 	seen := map[string]struct{}{}
-	var out []pointerInfo
+	var records []record
 	mapping.ForEach(func(_, node gjson.Result) bool {
-		role := node.Get("message.author.role").String()
-		if role != "tool" {
+		msg := node.Get("message")
+		if !msg.Exists() {
 			return true
 		}
-		// 收集这个 tool message 内所有 pointer
-		raw := node.Get("message.content").Raw
-		if raw == "" {
+		role := strings.ToLower(strings.TrimSpace(msg.Get("author.role").String()))
+		if role != "tool" && role != "assistant" {
 			return true
 		}
+		contentRaw := msg.Get("content").Raw
+		metadataRaw := msg.Get("metadata").Raw
+		isImageGen := msg.Get("metadata.async_task_type").String() == "image_gen"
+		hasAssetPointer := rawHasImageAssetPointer(contentRaw) || rawHasImageAssetPointer(metadataRaw)
+		if role == "assistant" && !isImageGen && !hasAssetPointer {
+			return true
+		}
+		raw := contentRaw + "\n" + metadataRaw
 		for _, m := range pointerRe.FindAllString(raw, -1) {
 			if _, skip := excluded[m]; skip {
 				continue
@@ -597,11 +618,26 @@ func collectToolPointersFromMapping(body []byte, excluded map[string]struct{}) (
 				continue
 			}
 			seen[m] = struct{}{}
-			out = append(out, pointerInfo{Pointer: m})
+			records = append(records, record{time: msg.Get("create_time").Float(), pointer: m})
 		}
 		return true
 	})
+	sort.SliceStable(records, func(i, j int) bool { return records[i].time < records[j].time })
+	out := make([]pointerInfo, 0, len(records))
+	for _, r := range records {
+		out = append(out, pointerInfo{Pointer: r.pointer})
+	}
 	return out, true
+}
+
+func rawHasImageAssetPointer(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	return strings.Contains(raw, `"content_type":"image_asset_pointer"`) ||
+		strings.Contains(raw, `"content_type": "image_asset_pointer"`) ||
+		strings.Contains(raw, "file-service://") ||
+		strings.Contains(raw, "sediment://")
 }
 
 func extractAssistantText(body []byte) string { //nolint:unused // kept for future SSE patch parsing; helper covered by tests in extractLastAssistantTextFromMapping

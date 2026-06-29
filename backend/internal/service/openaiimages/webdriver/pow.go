@@ -25,7 +25,8 @@ import (
 var powCores = []int{8, 16, 24, 32}
 
 var powDocumentKeys = []string{
-	"_reactListeningo743lnnpvdg",
+	"__reactContainer$fzelfjyxej8",
+	"_reactListening5dehydibo78",
 	"location",
 }
 
@@ -78,6 +79,8 @@ var powWindowKeys = []string{
 	"__NEXT_DATA__", "__BUILD_MANIFEST", "__NEXT_PRELOADREADY",
 }
 
+var powScreenResolutionSums = []int{3000, 2340, 4000, 6000}
+
 var powProcessStart = time.Now()
 
 func powFormatTime() string {
@@ -85,7 +88,7 @@ func powFormatTime() string {
 	return time.Now().In(loc).Format("Mon Jan 02 2006 15:04:05") + " GMT-0500 (Eastern Standard Time)"
 }
 
-// buildPowConfig 构建 PoW 计算配置（18 字段）。
+// buildPowConfig 构建 ChatGPT sentinel PoW 浏览器配置。
 //
 //	index 3 / index 9 在 solvePow 内部被替换为循环变量 i 与 i>>1。
 func buildPowConfig(ua, scriptSource, dataBuild string) []any {
@@ -95,16 +98,16 @@ func buildPowConfig(ua, scriptSource, dataBuild string) []any {
 	now := time.Now()
 	uptime := float64(time.Since(powProcessStart).Milliseconds())
 	return []any{
-		[]int{3000, 4000, 5000}[rand.Intn(3)],
+		powScreenResolutionSums[rand.Intn(len(powScreenResolutionSums))],
 		powFormatTime(),
 		4294705152,
-		0,
+		1,
 		ua,
 		scriptSource,
 		dataBuild,
 		"en-US",
 		"en-US,es-US,en,es",
-		0,
+		rand.Float64(),
 		powNavigatorKeys[rand.Intn(len(powNavigatorKeys))],
 		powDocumentKeys[rand.Intn(len(powDocumentKeys))],
 		powWindowKeys[rand.Intn(len(powWindowKeys))],
@@ -113,6 +116,8 @@ func buildPowConfig(ua, scriptSource, dataBuild string) []any {
 		"",
 		powCores[rand.Intn(len(powCores))],
 		float64(now.UnixMilli()) - uptime,
+		0, 0, 0, 0, 0, 0,
+		0, // 0 = edge/chrome, 1 = firefox
 	}
 }
 
@@ -162,19 +167,22 @@ func solvePow(seed, difficulty string, config []any, limit int) (string, bool) {
 	return "", false
 }
 
-// buildRequirementsToken 生成 sentinel chat-requirements 请求体里的 p 字段。
+// buildRequirementsToken 生成 sentinel chat-requirements prepare 请求体里的 p 字段。
+//
+// chatgpt2api 最新 Web 生图链路中，requirements token 不再对随机 seed
+// 做 PoW 搜索，而是直接把浏览器配置 JSON base64 后加 gAAAAAC 前缀；真正
+// 的 proof token 在 prepare 返回 proofofwork 后再求解并提交给 finalize。
 func buildRequirementsToken(ua string, scriptSources []string, dataBuild string) string {
 	src := defaultSentinelSDKURL
 	if len(scriptSources) > 0 {
 		src = scriptSources[rand.Intn(len(scriptSources))]
 	}
 	cfg := buildPowConfig(ua, src, dataBuild)
-	seed := strconv.FormatFloat(rand.Float64(), 'f', -1, 64)
-	encoded, ok := solvePow(seed, requirementsTokenDifficulty, cfg, 500000)
-	if !ok {
+	raw, err := json.Marshal(cfg)
+	if err != nil {
 		return ""
 	}
-	return "gAAAAAC" + encoded
+	return "gAAAAAC" + base64.StdEncoding.EncodeToString(raw)
 }
 
 // buildProofToken 生成 openai-sentinel-proof-token 头的值。

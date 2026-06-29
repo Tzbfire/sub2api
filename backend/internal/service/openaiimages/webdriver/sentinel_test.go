@@ -57,6 +57,36 @@ func TestBootstrap_FallbackOnFailure(t *testing.T) {
 	}
 }
 
+func TestFetchChatRequirements_V2PrepareFinalize(t *testing.T) {
+	var prepareSeen, finalizeSeen bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/chat-requirements/prepare":
+			prepareSeen = true
+			_, _ = w.Write([]byte(`{"prepare_token":"prep-1","turnstile":{"required":false},"arkose":{"required":false},"proofofwork":{"required":true,"seed":"seed","difficulty":"ff"}}`))
+		case "/chat-requirements/finalize":
+			finalizeSeen = true
+			_, _ = w.Write([]byte(`{"token":"final-token"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	client, _ := newHTTPClient("", fingerprints[0])
+	headers := buildHeaders(AccountInfo{AccessToken: "t"}, fingerprints[0])
+	r, err := fetchChatRequirements(context.Background(), client, headers, srv.URL+"/chat-requirements", []string{defaultSentinelSDKURL}, "")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if r.Token != "final-token" || r.ProofToken == "" {
+		t.Fatalf("unexpected requirements: token=%q proof=%q", r.Token, r.ProofToken)
+	}
+	if !prepareSeen || !finalizeSeen {
+		t.Fatalf("prepare=%v finalize=%v", prepareSeen, finalizeSeen)
+	}
+}
+
 func TestFetchChatRequirements_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

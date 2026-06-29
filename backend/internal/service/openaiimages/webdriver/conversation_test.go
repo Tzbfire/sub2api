@@ -63,11 +63,13 @@ func TestMergePointers_Dedup(t *testing.T) {
 
 func TestModelSlug(t *testing.T) {
 	cases := map[string]string{
-		"gpt-image-2":   "gpt-5-3",
-		"GPT-Image-2":   "gpt-5-3",
-		"auto":          "auto",
-		"gpt-5-3-mini":  "gpt-5-3",
-		"unknown-model": "auto",
+		"gpt-image-2":            "gpt-5-3",
+		"GPT-Image-2":            "gpt-5-3",
+		"codex-gpt-image-2":      "codex-gpt-image-2",
+		"plus-codex-gpt-image-2": "codex-gpt-image-2",
+		"auto":                   "auto",
+		"gpt-5-3-mini":           "gpt-5-3",
+		"unknown-model":          "auto",
 	}
 	for in, want := range cases {
 		if got := modelSlug(in); got != want {
@@ -162,5 +164,25 @@ func TestBuildUploadPointerSet(t *testing.T) {
 	}
 	if _, ok := set["file-service://b"]; !ok {
 		t.Error("b missing")
+	}
+}
+
+func TestCollectToolPointersFromMapping_AssistantImageGen(t *testing.T) {
+	body := []byte(`{
+	  "mapping": {
+	    "a": {"message": {"author": {"role": "assistant"}, "create_time": 2, "metadata": {"async_task_type": "image_gen", "asset": "sediment://assistant-asset"}, "content": {"content_type": "text", "parts": []}}},
+	    "b": {"message": {"author": {"role": "assistant"}, "create_time": 1, "content": {"content_type": "text", "parts": ["plain text"]}}},
+	    "c": {"message": {"author": {"role": "tool"}, "create_time": 3, "content": {"content_type": "multimodal_text", "parts": [{"content_type":"image_asset_pointer","asset_pointer":"file-service://tool-asset"}]}}}
+	  }
+	}`)
+	got, ok := collectToolPointersFromMapping(body, nil)
+	if !ok {
+		t.Fatal("expected mapping detected")
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 pointers, got %+v", got)
+	}
+	if got[0].Pointer != "sediment://assistant-asset" || got[1].Pointer != "file-service://tool-asset" {
+		t.Fatalf("unexpected pointers: %+v", got)
 	}
 }
